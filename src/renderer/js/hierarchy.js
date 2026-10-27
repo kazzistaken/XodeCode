@@ -142,3 +142,67 @@ export function initHierarchy(canvas) {
   store.on('joints', sync);
   sync();
 }
+
+/* ---------------------------- team tasks ---------------------------- */
+
+const MAX_TASKS = 40;
+
+export function teamTasks(joint) {
+  if (!Array.isArray(joint.tasks)) joint.tasks = [];
+  return joint.tasks;
+}
+
+/** A member got work (from the Director, its lead, or at spawn): it is now "doing" it. */
+export function assignTask(node, text) {
+  const joint = node.joint ? store.joints[node.joint] : null;
+  const title = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!joint || !title) return null;
+  const tasks = teamTasks(joint);
+  const task = {
+    id: `t_${Date.now().toString(36)}${Math.floor(Math.random() * 1000)}`,
+    title: title.length > 90 ? `${title.slice(0, 89)}…` : title,
+    status: 'doing',
+    owner: node.callSign,
+    nodeId: node.id,
+    at: Date.now(),
+  };
+  tasks.push(task);
+  // Keep the board small: drop the oldest finished cards first.
+  while (tasks.length > MAX_TASKS) {
+    const index = tasks.findIndex((entry) => entry.status === 'done');
+    tasks.splice(index === -1 ? 0 : index, 1);
+  }
+  return task;
+}
+
+/** A report moves the member's cards: done -> Done, blocked/question -> flagged. */
+export function applyReport(node, status) {
+  const joint = node.joint ? store.joints[node.joint] : null;
+  if (!joint) return;
+  for (const task of teamTasks(joint)) {
+    if (task.nodeId !== node.id || task.status === 'done') continue;
+    if (status === 'done') {
+      task.status = 'done';
+      delete task.flag;
+    } else if (status === 'blocked' || status === 'question') {
+      task.flag = status;
+    } else if (status === 'progress') {
+      delete task.flag;
+    }
+  }
+}
+
+/* ---------------------------- team budget --------------------------- */
+
+/** Dollars left for a team, or Infinity without a cap. */
+export function teamBudgetLeft(joint) {
+  const budget = Number(joint.budgetUsd) || 0;
+  if (budget <= 0) return Infinity;
+  return Math.max(0, budget - (Number(joint.spend) || 0));
+}
+
+export function teamSpendLabel(joint) {
+  const spend = `$${(Number(joint.spend) || 0).toFixed(2)}`;
+  const budget = Number(joint.budgetUsd) || 0;
+  return budget > 0 ? `${spend} of $${budget.toFixed(2)}` : spend;
+}

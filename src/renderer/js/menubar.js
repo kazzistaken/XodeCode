@@ -106,6 +106,7 @@ export function initMenubar(ctx) {
       label: 'View',
       items: () => [
         { label: 'Map…', hint: `${MOD} ${SHIFT} O`, action: () => ctx.openMap() },
+        { label: 'Hierarchy…', hint: `${MOD} ${SHIFT} H`, action: () => ctx.openHierarchy() },
         { divider: true },
         {
           label: 'Zoom in',

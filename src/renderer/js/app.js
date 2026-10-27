@@ -14,6 +14,7 @@ import { initVoice } from './voice.js';
 import { initNotifications } from './notifications.js';
 import { initDock } from './dock.js';
 import { initHierarchy } from './hierarchy.js';
+import { buildHierarchySheet } from './hierarchyview.js';
 import { initSettings } from './settings.js';
 import { initPages } from './pages.js';
 import { initControl, normalizeModel, normalizeEffort, canvasSummary } from './control.js';
@@ -143,6 +144,11 @@ function openDirectorLog() {
   setTimeout(() => sheet.focus(), 0);
 }
 
+function openHierarchy() {
+  const sheet = buildHierarchySheet(ctx, () => closeOverlay());
+  openOverlay(sheet.el, () => sheet.destroy());
+}
+
 const ctx = {
   canvas,
   store,
@@ -151,6 +157,7 @@ const ctx = {
   openSettings: (tab) => settings.open(tab),
   openMap: () => pages.openMap(),
   openDirectorLog,
+  openHierarchy,
   spawnClaude: () => spawnClaude(canvas),
   spawnShell: () => spawnShell(canvas),
   openBrowser: (url) => openBrowser(canvas, url),
@@ -268,6 +275,11 @@ window.addEventListener('keydown', (event) => {
     store.setActivePage(Number(key) - 1);
     return;
   }
+  if (mod && event.shiftKey && key.toLowerCase() === 'h') {
+    event.preventDefault();
+    openHierarchy();
+    return;
+  }
   if (mod && event.shiftKey && key.toLowerCase() === 'o') {
     event.preventDefault();
     pages.openMap();
@@ -348,6 +360,7 @@ window.__xo = {
   tryQuick: (text) => quick.tryHandle(text),
   canvasSummary: () => canvasSummary(ctx),
   openDirectorLog: () => openDirectorLog(),
+  openHierarchy: () => openHierarchy(),
   normalizeModel,
   normalizeEffort,
   get settings() {

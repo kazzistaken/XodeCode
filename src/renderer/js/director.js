@@ -143,7 +143,8 @@ export function setContextProvider(fn) {
   contextProvider = fn;
 }
 
-export function sendToDirector(text) {
+/** `from: "team"` marks a report from a team lead rather than the user. */
+export function sendToDirector(text, { from } = {}) {
   const clean = String(text || '').trim();
   if (!clean) return false;
   if (status === 'dead') restartDirector();
@@ -156,7 +157,7 @@ export function sendToDirector(text) {
   }
 
   pending += 1;
-  push({ role: 'user', text: clean });
+  push(from ? { role: 'user', text: clean, from } : { role: 'user', text: clean });
   setStatus('working');
   window.api.director
     .send(context ? `${context}\n\n${clean}` : clean)

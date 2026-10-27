@@ -15,6 +15,11 @@ import {
   moveToTeam,
   commitTeams,
   teamTree,
+  teamTasks,
+  assignTask,
+  applyReport,
+  teamBudgetLeft,
+  teamSpendLabel,
 } from './hierarchy.js';
 
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -297,6 +302,9 @@ async function handle(ctx, method, params) {
       if (store.budgetLeft() <= 0) {
         throw new Error('budget reached — raise it with `budget --usd <amount>`');
       }
+      if (teamBudgetLeft(joint) <= 0) {
+        throw new Error(`team ${joint.name} is out of budget (${teamSpendLabel(joint)})`);
+      }
       const prompt = String(params.prompt || '').trim();
       const place = rankForNewMember(joint.id);
       const isLead = place.rank === 'lead';
@@ -318,6 +326,7 @@ async function handle(ctx, method, params) {
         jointContextPath: joint.path,
       });
       if (isLead) joint.leadId = node.id;
+      if (prompt) assignTask(node, params.role ? `${params.role}: ${prompt}` : prompt);
       commitTeams(ctx.canvas);
       const info = jointInfo(joint);
       return { joint: info, member: agentInfo(node) };
@@ -555,8 +564,11 @@ async function handle(ctx, method, params) {
       if (!text) throw new Error('send needs --text "<message>"');
       if (!hasSession(node.id)) throw new Error(`${node.callSign} has no live session`);
       writeToNode(node.id, text);
-      node.title = truncate(text, 46) || node.title;
+      const task = String(params.task || text);
+      node.title = truncate(task, 46) || node.title;
       ctx.canvas.refreshTitles(node.id);
+      // Work handed to a team member lands on the team's board as "doing".
+      if (node.joint && assignTask(node, task)) commitTeams(ctx.canvas);
       return agentInfo(node);
     }
 
@@ -619,7 +631,20 @@ async function handle(ctx, method, params) {
       return { removed: true };
 
     case 'board.open': {
-      const node = openBoard(ctx.canvas, { title: params.title });
+      // {joint} opens that team's live board (one per team).
+      const joint = params.joint ? store.findJoint(params.joint) : null;
+      if (params.joint && !joint) throw new Error(`no team matching "${params.joint}"`);
+      if (joint) {
+        const existing = store.allNodes().find((node) => node.kind === 'board' && node.payload?.joint === joint.id);
+        if (existing) {
+          ctx.canvas.focusAgent(existing.id);
+          return nodeInfo(existing);
+        }
+      }
+      const node = openBoard(ctx.canvas, {
+        title: params.title || (joint ? `${joint.name} tasks` : undefined),
+        joint: joint ? joint.id : undefined,
+      });
       return nodeInfo(node);
     }
 
@@ -734,7 +759,8 @@ async function handle(ctx, method, params) {
       if (target === 'settings') ctx.openSettings();
       else if (target === 'map') ctx.openMap();
       else if (target === 'director') ctx.openDirectorLog();
-      else throw new Error('open --target must be settings | map | director');
+      else if (target === 'hierarchy') ctx.openHierarchy();
+      else throw new Error('open --target must be settings | map | director | hierarchy');
       return { opened: target };
     }
 
@@ -961,6 +987,15 @@ async function runOp(ctx, action) {
     case 'demote':
     case 'move_team':
       return rankOp(ctx, action);
+    case 'team_budget': {
+      const joint = store.findJoint(action.joint);
+      if (!joint) throw new Error(`no team matching "${action.joint}"`);
+      const usd = Number(action.usd);
+      if (!Number.isFinite(usd) || usd < 0) throw new Error('team_budget needs usd >= 0 (0 = no cap)');
+      joint.budgetUsd = usd;
+      commitTeams(ctx.canvas);
+      return { team: joint.name, spend: teamSpendLabel(joint) };
+    }
     case 'context':
       return handle(ctx, action.append ? 'context.append' : 'context.set', action);
     case 'page':
@@ -1050,7 +1085,10 @@ export function canvasSummary(ctx) {
     };
     for (const { joint, lead, workers } of teams) {
       const under = workers.length ? ` > workers ${workers.map(who).join(', ')}` : ' > no workers';
-      lines.push(`- ${joint.name}: lead ${who(lead)}${under}`);
+      const tasks = teamTasks(joint);
+      const count = (status) => tasks.filter((task) => task.status === status).length;
+      const stats = ` · spend ${teamSpendLabel(joint)} · tasks ${count('doing')} doing, ${count('done')} done`;
+      lines.push(`- ${joint.name}${stats}: lead ${who(lead)}${under}`);
     }
   }
   return lines.join('\n');
@@ -1116,6 +1154,11 @@ async function teamHandle(ctx, method, params, callerId) {
   if (!joint) throw new Error('you are not in a team');
   const members = teamMembers(joint.id);
   const lead = members.find((node) => node.rank === 'lead') || null;
+  const overBudget = () => {
+    if (teamBudgetLeft(joint) <= 0) {
+      throw new Error(`team budget reached (${teamSpendLabel(joint)}) — report blocked so the Director can raise it`);
+    }
+  };
   const leadOnly = (what) => {
     if (caller.rank !== 'lead') {
       throw new Error(`only the team lead can ${what}${lead ? ` — ask ${lead.callSign} with report` : ''}`);
@@ -1132,6 +1175,10 @@ async function teamHandle(ctx, method, params, callerId) {
         reportsTo: caller.rank === 'lead' ? 'the Director' : lead ? lead.callSign : null,
         members: members.map(memberInfo),
         maxWorkers: MAX_WORKERS,
+        spend: teamSpendLabel(joint),
+        tasks: teamTasks(joint)
+          .slice(-15)
+          .map((task) => ({ title: task.title, owner: task.owner, status: task.status, flag: task.flag })),
       };
 
     case 'team.report': {
@@ -1139,15 +1186,30 @@ async function teamHandle(ctx, method, params, callerId) {
       const text = truncate(String(params.text || '').trim(), 400);
       if (!text) throw new Error('report needs text');
       caller.lastReport = { status, text, at: Date.now() };
+      applyReport(caller, status);
       store.save();
       store.emit('teams');
-      const to = caller.rank === 'lead' ? 'the Director' : lead ? lead.callSign : 'the team';
-      if (status !== 'progress') ctx.toast(`${caller.callSign} → ${to}: ${status} — ${truncate(text, 90)}`);
-      return { reported: status, to };
+      const toLead = caller.rank !== 'lead' && lead && lead !== caller;
+      const to = toLead ? lead.callSign : 'the Director';
+      if (status === 'progress') return { reported: status, to, delivered: false };
+      ctx.toast(`${caller.callSign} → ${to}: ${status} — ${truncate(text, 90)}`);
+      // Reports go up one level: a worker's into its lead's input, the lead's
+      // to the Director. Either waits for the receiver's current turn.
+      let delivered = false;
+      if (toLead && hasSession(lead.id)) {
+        delivered = writeToNode(lead.id, `[Report from ${caller.callSign}, your worker: ${status}] ${text}`);
+      } else if (!toLead && ctx.director) {
+        delivered = ctx.director.send(
+          `[Team report] ${caller.callSign}, lead of team ${joint.name}: ${status} — ${text}`,
+          { from: 'team' }
+        );
+      }
+      return { reported: status, to, delivered };
     }
 
     case 'team.spawn': {
       leadOnly('start workers');
+      overBudget();
       const workers = members.filter((node) => node.rank === 'worker');
       if (workers.length >= MAX_WORKERS) {
         throw new Error(`team is full (${MAX_WORKERS} workers) — prompt an existing worker instead`);
@@ -1164,6 +1226,7 @@ async function teamHandle(ctx, method, params, callerId) {
 
     case 'team.prompt': {
       leadOnly('prompt workers');
+      overBudget();
       const wanted = String(params.worker || '').toLowerCase();
       const target = members.find(
         (node) => node.id === params.worker || String(node.callSign).toLowerCase() === wanted
@@ -1175,6 +1238,7 @@ async function teamHandle(ctx, method, params, callerId) {
       await handle(ctx, 'agent.send', {
         agent: target.id,
         text: `[From ${caller.callSign}, your team lead] ${text}`,
+        task: text,
       });
       return { sent: target.callSign };
     }

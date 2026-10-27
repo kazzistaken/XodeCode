@@ -59,6 +59,10 @@ function toolChips(group) {
 /** Render one transcript entry (or tool group) as a Claude-style row. */
 export function renderEntry(entry) {
   if (entry.role === 'tools') return toolChips(entry);
+  if (entry.role === 'user' && entry.from === 'team') {
+    // A lead's report, not something the user typed.
+    return el('div', { class: 'dx-row is-report' }, el('div', { class: 'dx-report', text: entry.text }));
+  }
   if (entry.role === 'user') {
     return el('div', { class: 'dx-row is-user' }, el('div', { class: 'dx-bubble', text: entry.text }));
   }

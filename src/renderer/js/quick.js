@@ -316,6 +316,12 @@ export function initQuick(ctx) {
     }
 
     // App surfaces
+    if (/^(?:open|show)\s+(?:me\s+)?(?:the\s+)?(?:hierarchy|org\s*chart)$/.test(q)) {
+      return () => {
+        ctx.openHierarchy();
+        return 'Opened the hierarchy';
+      };
+    }
     match = q.match(/^open\s+(?:the\s+)?(settings|map|director log)$/);
     if (match) {
       return () => {

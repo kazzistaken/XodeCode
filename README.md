@@ -81,8 +81,29 @@ current — that is their shared context.
 You prompt the **Director**, not the agents. It splits your request into independent workstreams,
 writes each member's prompt, and routes by difficulty: hard, logical, architectural work goes to
 **Opus at high effort**; simple, mechanical or UI work goes to **Sonnet at low/medium**. Up to **5**
-members per joint. Members are outlined in the joint's colour, badged with its name, and linked by a
-dashed spine on the canvas.
+members per joint.
+
+### Team hierarchy
+
+Every joint is a ranked team: **you > the Director (the app's AI agent) > one lead > its workers**.
+Standalone sessions are outside the hierarchy.
+
+- **On the canvas** each member has a `LEAD | team` or `WORKER | team` chip in its team colour,
+  and curved lines run from the lead to its workers. The Director sheet lists the teams as a tree.
+- **Team tools.** Each member gets its own MCP server (`team`) with a token that identifies its
+  window. Everyone has `team` (see the team) and `report` (done / blocked / question / progress);
+  the lead also has `spawn_worker` (max 4), `prompt_worker` and `brief`. The app checks rank and
+  team on every call, and an agent token can never reach the Director's tools.
+- **Reports flow up.** A worker's report lands in its lead's input; a lead's report goes to the
+  Director, which may act within that team's goal but never starts new work. Messages wait for an
+  agent's current turn instead of interrupting it.
+- **Tasks and budgets.** Work handed to a member becomes a `doing` card on the team's task list and
+  moves to `done` when it reports done (open a live board with `{op:"board", joint}`). Each team
+  tracks its own spend (Claude look only); `{op:"team_budget", joint, usd}` caps it.
+- **Hierarchy view** (`Ctrl+Shift+H`, View → Hierarchy, or "show hierarchy"): an org chart with
+  each agent's status, current task and latest report. Click a card to jump to the window.
+- **Live test:** `XODECODE_TEAMTEST=<dir> XODECODE_USERDATA=<dir>/profile npx electron .` runs a
+  small Haiku team through every step in a throwaway profile (`src/main/teamtest.js`).
 
 ```bash
 xode joint new --name "checkout"

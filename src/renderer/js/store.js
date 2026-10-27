@@ -182,13 +182,20 @@ class Store {
     return this.state.joints;
   }
 
-  addSpend(usd, model) {
+  addSpend(usd, model, nodeId) {
     const amount = Number(usd);
     if (!Number.isFinite(amount) || amount <= 0) return this.state.spend;
     const spend = this.state.spend;
     spend.total = Math.round((spend.total + amount) * 1e6) / 1e6;
     if (model) spend.byModel[model] = Math.round(((spend.byModel[model] || 0) + amount) * 1e6) / 1e6;
     spend.updatedAt = Date.now();
+    // Team members also count toward their team's own spend.
+    const node = nodeId ? this.findNode(nodeId)?.node : null;
+    const joint = node && node.joint ? this.state.joints[node.joint] : null;
+    if (joint) {
+      joint.spend = Math.round(((Number(joint.spend) || 0) + amount) * 1e6) / 1e6;
+      this.emit('teams');
+    }
     this.save();
     this.emit('spend', spend);
     return spend;

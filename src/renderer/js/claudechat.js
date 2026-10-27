@@ -483,11 +483,12 @@ export function createChatView(meta, canvas, options = {}) {
       setStatus('idle');
       if (payload.costUsd) {
         chat.cost += Number(payload.costUsd) || 0;
-        store.addSpend(payload.costUsd, meta.model);
+        store.addSpend(payload.costUsd, meta.model, meta.id);
       }
       if (!payload.ok && payload.result) add('error', String(payload.result));
       persist();
       render();
+      drainInbox();
       return;
     }
     if (payload.type === 'error') {
@@ -495,6 +496,7 @@ export function createChatView(meta, canvas, options = {}) {
       streaming = null;
       setStatus('idle');
       add('error', payload.message);
+      drainInbox();
       return;
     }
     if (payload.type === 'exit') {
@@ -503,11 +505,25 @@ export function createChatView(meta, canvas, options = {}) {
       streaming = null;
       setStatus('idle');
       render();
+      drainInbox();
     }
   }
 
+  // Messages from the Director, a lead or a report wait for the current turn
+  // to finish instead of interrupting it (typing yourself still interrupts).
+  const inbox = [];
+  function drainInbox() {
+    if (busy || !inbox.length) return;
+    sendText(inbox.shift());
+  }
+
   handlers.set(meta.id, onEvent);
-  options.session?.set({ write: (text) => sendText(text) });
+  options.session?.set({
+    write: (text) => {
+      inbox.push(text);
+      drainInbox();
+    },
+  });
 
   /* ------------------------------- input ------------------------------ */
 

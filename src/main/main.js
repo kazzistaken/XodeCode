@@ -1,6 +1,9 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog, net, protocol, shell, clipboard } = require('electron');
+
+// Dev/test hook: run against a throwaway profile instead of the real one.
+if (process.env.XODECODE_USERDATA) app.setPath('userData', process.env.XODECODE_USERDATA);
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -165,6 +168,10 @@ every agent. Refer to yourself as "I" (or "the Director") and to the user as "yo
   YouTube and GitHub side by side." No markdown, no caveats. If an action failed, say which.
 - Only act when asked. If the user is just chatting or asking a question, answer briefly and do
   nothing. Never spawn or prompt agents on your own initiative and never invent tasks.
+- Messages starting with [Team report] come from a team lead, not the user. You may act on them
+  within that team's existing goal (e.g. send the lead its next step or unblock it) but never
+  start new work, and never raise a team's budget unless the user asks. If nothing is needed,
+  reply with one short sentence summarising the report for the user.
 - Refer to windows by id, name (e.g. "Skye") or title. "it"/"that" means the focused window or the
   one you last opened.
 
@@ -199,6 +206,8 @@ Claude Code sessions
   member is the team lead (lead:true, else the first); the rest are workers under it.
 - {op:"joint_add", joint, role, prompt, model, effort}  adds a worker under the team's lead.
 - {op:"joint_brief", joint, text, append?}
+- {op:"team_budget", joint, usd}  cap a team's spend (0 = no cap) · {op:"board", joint}  open that
+  team's live task board · {op:"open", target:"hierarchy"}  the org-chart view.
 - {op:"lead", agent} make it its team's lead (old lead becomes a worker) · {op:"demote", agent}
   hand the lead role to the next member · {op:"move_team", agent, joint} move into a team as a
   worker; joint:"none" takes it out of every team.
@@ -1380,6 +1389,16 @@ function createWindow() {
   });
 
   mainWindow.loadURL(`${SCHEME}://${HOST}/src/renderer/index.html`);
+
+  if (process.env.XODECODE_TEAMTEST) {
+    const { runTeamTest } = require('./teamtest');
+    mainWindow.webContents.once('did-finish-load', () => {
+      runTeamTest(mainWindow, { url: control.url, token: control.token, agentToken: control.agentToken }).catch((error) => {
+        console.log(`TEAMTEST_FAIL ${error && error.message}`);
+        app.quit();
+      });
+    });
+  }
 
   if (process.env.XODECODE_SMOKE) {
     const { runSmoke } = require('./smoke');
