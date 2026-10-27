@@ -262,14 +262,7 @@ export class Canvas {
     el.style.height = `${meta.h}px`;
     el.style.zIndex = String(meta.z || 1);
 
-    if (meta.joint) {
-      const joint = store.joints[meta.joint];
-      el.classList.add('is-joint');
-      el.style.setProperty('--joint-color', (joint && joint.color) || '#cfcfcf');
-    } else {
-      el.classList.remove('is-joint');
-      el.style.removeProperty('--joint-color');
-    }
+    this._syncTeamChrome(meta, el);
 
     // Glide from the old spot to the new one, and ease the box to its new size,
     // so a re-tile reads as motion rather than a jump.
@@ -293,7 +286,44 @@ export class Canvas {
     this.drawJointLines();
   }
 
-  /** Draw the dashed "spine" that joins the members of each jointed team. */
+  /** Team colour, rank badge and team chip on a window's title bar. */
+  _syncTeamChrome(meta, el) {
+    const joint = meta.joint ? store.joints[meta.joint] : null;
+    const head = el.querySelector(':scope > .node-head');
+    let chip = head?.querySelector(':scope > .node-joint');
+    if (!joint) {
+      el.classList.remove('is-joint', 'is-lead');
+      el.style.removeProperty('--joint-color');
+      chip?.remove();
+      return;
+    }
+    const lead = meta.rank === 'lead';
+    el.classList.add('is-joint');
+    el.classList.toggle('is-lead', lead);
+    el.style.setProperty('--joint-color', joint.color || '#cfcfcf');
+    if (!head) return;
+    if (!chip) {
+      chip = document.createElement('span');
+      chip.className = 'node-joint';
+      chip.append(document.createElement('b'), document.createElement('span'));
+      head.insertBefore(chip, head.querySelector(':scope > .node-status'));
+    }
+    chip.classList.toggle('is-lead', lead);
+    chip.firstChild.textContent = lead ? 'Lead' : 'Worker';
+    chip.lastChild.textContent = joint.name;
+    chip.title = lead ? `Lead of team ${joint.name}` : `Worker in team ${joint.name}`;
+  }
+
+  /** Re-apply rank chrome and lines after the hierarchy changes. */
+  refreshTeams() {
+    for (const node of store.allNodes()) {
+      const view = this.views.get(node.id);
+      if (view) this._syncTeamChrome(node, view.el);
+    }
+    this.drawJointLines();
+  }
+
+  /** Draw a curved line from each team's lead to every one of its workers. */
   drawJointLines() {
     for (const page of store.pages) {
       const pageEl = this.pageEls.get(page.id);
@@ -307,42 +337,44 @@ export class Canvas {
       }
       svg.replaceChildren();
 
-      const groups = new Map();
-      for (const node of page.nodes) {
-        if (!node.joint || node.parked) continue;
-        if (!groups.has(node.joint)) groups.set(node.joint, []);
-        groups.get(node.joint).push(node);
-      }
-
-      for (const [jointId, members] of groups) {
-        if (members.length < 2) continue;
-        const joint = store.joints[jointId];
+      const visible = page.nodes.filter((node) => node.joint && !node.parked);
+      const ns = 'http://www.w3.org/2000/svg';
+      for (const lead of visible.filter((node) => node.rank === 'lead')) {
+        const joint = store.joints[lead.joint];
         const color = (joint && joint.color) || '#cfcfcf';
-        const points = members
-          .map((node) => [node.x + node.w / 2, node.y + node.h / 2])
-          .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        const from = [lead.x + lead.w / 2, lead.y + lead.h / 2];
+        const workers = visible.filter((node) => node.parentId === lead.id);
+        for (const worker of workers) {
+          const to = [worker.x + worker.w / 2, worker.y + worker.h / 2];
+          // A soft S-curve along the longer axis reads as "reports to".
+          const horizontal = Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1]);
+          const mx = (from[0] + to[0]) / 2;
+          const my = (from[1] + to[1]) / 2;
+          const c1 = horizontal ? [mx, from[1]] : [from[0], my];
+          const c2 = horizontal ? [mx, to[1]] : [to[0], my];
+          const path = document.createElementNS(ns, 'path');
+          path.setAttribute('d', `M ${from[0]} ${from[1]} C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${to[0]} ${to[1]}`);
+          path.setAttribute('fill', 'none');
+          path.setAttribute('stroke', color);
+          path.setAttribute('stroke-width', '2');
+          path.setAttribute('stroke-dasharray', '7 7');
+          path.setAttribute('opacity', '0.6');
+          svg.append(path);
 
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute(
-          'd',
-          points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point[0]} ${point[1]}`).join(' ')
-        );
-        path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', color);
-        path.setAttribute('stroke-width', '2');
-        path.setAttribute('stroke-dasharray', '7 7');
-        path.setAttribute('opacity', '0.6');
-        svg.append(path);
-
-        for (const point of points) {
-          const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          dot.setAttribute('cx', point[0]);
-          dot.setAttribute('cy', point[1]);
+          const dot = document.createElementNS(ns, 'circle');
+          dot.setAttribute('cx', to[0]);
+          dot.setAttribute('cy', to[1]);
           dot.setAttribute('r', '3.5');
           dot.setAttribute('fill', color);
           dot.setAttribute('opacity', '0.85');
           svg.append(dot);
         }
+        const hub = document.createElementNS(ns, 'circle');
+        hub.setAttribute('cx', from[0]);
+        hub.setAttribute('cy', from[1]);
+        hub.setAttribute('r', '6');
+        hub.setAttribute('fill', color);
+        svg.append(hub);
       }
     }
   }
@@ -499,8 +531,9 @@ export class Canvas {
     const nodes = this.tileableNodes(page);
     const rects = tileRects({
       count: nodes.length,
-      view: this.visibleWorldRect(),
-      scale: (this._vpTarget || store.page.viewport).scale || 1,
+      // Fixed 100%-zoom frame: windows are the same size at any zoom.
+      view: this.layoutFrame(),
+      scale: 1,
       config: LAYOUT,
       mode: page.layout || 'grid',
       mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
@@ -539,7 +572,7 @@ export class Canvas {
       }
     }
     store.save();
-    this._homeRects.set(page.id, this.visibleWorldRect());
+    this._homeRects.set(page.id, this.layoutFrame());
     this.updateWorldBackground(page);
     return plan.map((item) => item.rect);
   }
@@ -552,7 +585,7 @@ export class Canvas {
    */
   updateWorldBackground(page = store.page) {
     if (page.id !== store.page.id) return;
-    const home = this._homeRects.get(page.id) || this.visibleWorldRect();
+    const home = this._homeRects.get(page.id) || this.layoutFrame();
     let minX = home.x;
     let minY = home.y;
     let maxX = home.x + home.w;
@@ -662,6 +695,24 @@ export class Canvas {
     };
   }
 
+  /**
+   * The frame windows tile into: one screen's worth of canvas *at 100% zoom*,
+   * centred on whatever is in view. Zoom level never changes how big windows
+   * are in the world — zoomed out they simply look smaller — so nothing is
+   * created oversized and then resolution-stretched to fit.
+   */
+  layoutFrame() {
+    const visible = this.visibleWorldRect();
+    const w = this.viewportEl.clientWidth;
+    const h = this.viewportEl.clientHeight;
+    return {
+      x: visible.x + visible.w / 2 - w / 2,
+      y: visible.y + visible.h / 2 - h / 2,
+      w,
+      h,
+    };
+  }
+
   createNode(partial, options = {}) {
     const { focus = true, silent = false, autoPosition = true } = options;
     const page = store.page;
@@ -686,6 +737,8 @@ export class Canvas {
       joint: partial.joint || null,
       jointName: partial.jointName || '',
       jointContextPath: partial.jointContextPath || '',
+      rank: partial.joint ? partial.rank || null : null,
+      parentId: partial.joint ? partial.parentId || null : null,
       status: 'idle',
       unread: false,
       payload: partial.payload ?? null,
@@ -743,8 +796,9 @@ export class Canvas {
     const nodes = this.tileableNodes(page);
     const rects = tileRects({
       count: nodes.length + 1,
-      view: this.visibleWorldRect(),
-      scale: (this._vpTarget || store.page.viewport).scale || 1,
+      // Fixed 100%-zoom frame: windows are the same size at any zoom.
+      view: this.layoutFrame(),
+      scale: 1,
       config: LAYOUT,
       mode: page.layout || 'grid',
       mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
@@ -810,6 +864,8 @@ export class Canvas {
       delete copy.joint;
       delete copy.jointName;
       delete copy.jointContextPath;
+      delete copy.rank;
+      delete copy.parentId;
       copy.x = node.x + 28;
       copy.y = node.y + 28;
       copy.prompt = '';

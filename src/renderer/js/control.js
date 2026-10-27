@@ -6,6 +6,16 @@ import { openBoard } from './board.js';
 import { truncate, uid } from './util.js';
 import { TILEABLE } from './layout.js';
 import { setBackgroundPreset } from './backgrounds.js';
+import {
+  RANK_LABEL,
+  teamMembers,
+  rankForNewMember,
+  setLead,
+  demoteLead,
+  moveToTeam,
+  commitTeams,
+  teamTree,
+} from './hierarchy.js';
 
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const DEFAULT_MODEL = 'claude-sonnet-5-5';
@@ -159,9 +169,7 @@ const THEME_ALIASES = {
 const JOINT_COLORS = ['#f2764b', '#6ea8f7', '#4fc99b', '#e6a53c', '#a98bf5', '#56b6c2'];
 const MAX_JOINT_MEMBERS = 5;
 
-function jointMembers(jointId) {
-  return store.allNodes().filter((node) => node.joint === jointId);
-}
+const jointMembers = teamMembers;
 
 function jointInfo(joint) {
   const members = jointMembers(joint.id);
@@ -171,7 +179,10 @@ function jointInfo(joint) {
     color: joint.color,
     path: joint.path,
     size: members.length,
+    lead: joint.leadId || null,
     members: members.map((node) => ({
+      id: node.id,
+      rank: node.rank || undefined,
       callSign: node.callSign,
       title: node.title,
       model: node.model,
@@ -287,12 +298,16 @@ async function handle(ctx, method, params) {
         throw new Error('budget reached — raise it with `budget --usd <amount>`');
       }
       const prompt = String(params.prompt || '').trim();
+      const place = rankForNewMember(joint.id);
+      const isLead = place.rank === 'lead';
       const node = spawnTerminal(ctx.canvas, {
         cli: 'claude',
         prompt,
         cwd: params.cwd || undefined,
-        model: normalizeModel(params.model),
-        effort: normalizeEffort(params.effort),
+        model: params.model ? normalizeModel(params.model) : isLead ? 'claude-opus-5-5' : DEFAULT_MODEL,
+        effort: params.effort ? normalizeEffort(params.effort) : isLead ? 'high' : 'medium',
+        rank: place.rank,
+        parentId: place.parentId,
         title: params.title
           ? truncate(params.title, 46)
           : params.role
@@ -302,6 +317,8 @@ async function handle(ctx, method, params) {
         jointName: joint.name,
         jointContextPath: joint.path,
       });
+      if (isLead) joint.leadId = node.id;
+      commitTeams(ctx.canvas);
       const info = jointInfo(joint);
       return { joint: info, member: agentInfo(node) };
     }
@@ -775,6 +792,11 @@ async function jointOp(ctx, action) {
     await window.api.joint.write({ id: joint.id, content: String(action.brief) });
   }
   const members = Array.isArray(action.members) ? action.members.slice(0, MAX_JOINT_MEMBERS) : [];
+  // The lead spawns first so every worker is created under it.
+  if (!teamMembers(joint.id).length) {
+    const leadIndex = members.findIndex((member) => member.lead || /lead/i.test(member.role || ''));
+    if (leadIndex > 0) members.unshift(members.splice(leadIndex, 1)[0]);
+  }
   const spawned = [];
   for (const member of members) {
     spawned.push(
@@ -789,7 +811,34 @@ async function jointOp(ctx, action) {
       }).then((result) => result.member)
     );
   }
-  return { joint: joint.name, members: spawned.map((m) => `${m.callSign} (${m.model}/${m.effort})`) };
+  return {
+    joint: joint.name,
+    members: spawned.map((m) => `${m.callSign} ${RANK_LABEL[store.findNode(m.id)?.node.rank] || ''} (${m.model}/${m.effort})`),
+  };
+}
+
+function rankOp(ctx, action) {
+  const node = requireAgent(action.agent);
+  if (action.op === 'lead') {
+    setLead(node);
+  } else if (action.op === 'demote') {
+    demoteLead(node);
+  } else {
+    const ref = action.joint === undefined ? '' : String(action.joint || '').trim();
+    const solo = !ref || /^(none|null|solo|out)$/i.test(ref);
+    const joint = solo ? null : store.findJoint(ref);
+    if (!solo && !joint) throw new Error(`no team matching "${ref}"`);
+    if (joint && joint.id !== node.joint && teamMembers(joint.id).length >= MAX_JOINT_MEMBERS) {
+      throw new Error(`team "${joint.name}" is full (max ${MAX_JOINT_MEMBERS} members)`);
+    }
+    moveToTeam(node, joint);
+  }
+  commitTeams(ctx.canvas);
+  return {
+    agent: node.callSign,
+    team: node.jointName || null,
+    rank: node.rank || 'solo',
+  };
 }
 
 function pageOp(ctx, action) {
@@ -908,6 +957,10 @@ async function runOp(ctx, action) {
       return handle(ctx, 'joint.spawn', action);
     case 'joint_brief':
       return handle(ctx, action.append ? 'joint.context.append' : 'joint.context.set', action);
+    case 'lead':
+    case 'demote':
+    case 'move_team':
+      return rankOp(ctx, action);
     case 'context':
       return handle(ctx, action.append ? 'context.append' : 'context.set', action);
     case 'page':
@@ -955,7 +1008,7 @@ function describeNode(node, ctx, page) {
   if (kindOf(node) === 'agent') {
     extra.push(node.status || 'idle');
     if (node.model) extra.push(`${String(node.model).replace(/^claude-/, '')}/${node.effort || 'medium'}`);
-    if (node.jointName) extra.push(`joint ${node.jointName}`);
+    if (node.jointName) extra.push(`${node.rank === 'lead' ? 'lead of' : 'worker in'} team ${node.jointName}`);
   }
   if (ctx.canvas.selectedId === node.id) extra.push('focused');
   if (page.mainId === node.id && page.layout === 'focus') extra.push('main');
@@ -988,11 +1041,17 @@ export function canvasSummary(ctx) {
     .filter(({ p }) => p !== page)
     .map(({ p, index }) => `${index + 1} "${p.name}" (${p.nodes.length} windows)`);
   if (others.length) lines.push(`other pages: ${others.join(', ')}`);
-  const joints = Object.values(store.joints);
-  if (joints.length) {
-    lines.push(
-      `joints: ${joints.map((joint) => `${joint.name} (${jointMembers(joint.id).length})`).join(', ')}`
-    );
+  const teams = teamTree();
+  if (teams.length) {
+    lines.push('teams (joints; ranks: user > you, the Director > lead > workers):');
+    const who = (node) => {
+      const report = node.lastReport ? ` [reported ${node.lastReport.status}: "${truncate(node.lastReport.text, 80)}"]` : '';
+      return `${node.id} "${node.callSign}" ${node.status || 'idle'}${node.parked ? ' docked' : ''}${report}`;
+    };
+    for (const { joint, lead, workers } of teams) {
+      const under = workers.length ? ` > workers ${workers.map(who).join(', ')}` : ' > no workers';
+      lines.push(`- ${joint.name}: lead ${who(lead)}${under}`);
+    }
   }
   return lines.join('\n');
 }
@@ -1027,10 +1086,118 @@ function canvasDetail(ctx) {
   };
 }
 
+/* ----------------------------- team tools ----------------------------- */
+
+const MAX_WORKERS = 4;
+const REPORT_STATUSES = new Set(['done', 'blocked', 'question', 'progress']);
+
+function memberInfo(node) {
+  return {
+    id: node.id,
+    callSign: node.callSign,
+    rank: node.rank,
+    status: node.status || 'idle',
+    title: node.title || '',
+    model: node.model || undefined,
+    lastReport: node.lastReport || undefined,
+  };
+}
+
+/**
+ * Requests from a team agent's own MCP server. `callerId` comes from the
+ * agent's token (set by the main process), so it cannot be faked by the agent;
+ * every action is checked against the caller's rank and team.
+ */
+async function teamHandle(ctx, method, params, callerId) {
+  const found = store.findNode(callerId);
+  const caller = found && found.node;
+  if (!caller) throw new Error('your window is gone');
+  const joint = caller.joint ? store.joints[caller.joint] : null;
+  if (!joint) throw new Error('you are not in a team');
+  const members = teamMembers(joint.id);
+  const lead = members.find((node) => node.rank === 'lead') || null;
+  const leadOnly = (what) => {
+    if (caller.rank !== 'lead') {
+      throw new Error(`only the team lead can ${what}${lead ? ` — ask ${lead.callSign} with report` : ''}`);
+    }
+  };
+
+  switch (method) {
+    case 'team.info':
+      return {
+        you: { callSign: caller.callSign, rank: caller.rank },
+        team: joint.name,
+        brief: joint.path,
+        lead: lead ? lead.callSign : null,
+        reportsTo: caller.rank === 'lead' ? 'the Director' : lead ? lead.callSign : null,
+        members: members.map(memberInfo),
+        maxWorkers: MAX_WORKERS,
+      };
+
+    case 'team.report': {
+      const status = REPORT_STATUSES.has(params.status) ? params.status : 'progress';
+      const text = truncate(String(params.text || '').trim(), 400);
+      if (!text) throw new Error('report needs text');
+      caller.lastReport = { status, text, at: Date.now() };
+      store.save();
+      store.emit('teams');
+      const to = caller.rank === 'lead' ? 'the Director' : lead ? lead.callSign : 'the team';
+      if (status !== 'progress') ctx.toast(`${caller.callSign} → ${to}: ${status} — ${truncate(text, 90)}`);
+      return { reported: status, to };
+    }
+
+    case 'team.spawn': {
+      leadOnly('start workers');
+      const workers = members.filter((node) => node.rank === 'worker');
+      if (workers.length >= MAX_WORKERS) {
+        throw new Error(`team is full (${MAX_WORKERS} workers) — prompt an existing worker instead`);
+      }
+      const result = await handle(ctx, 'joint.spawn', {
+        joint: joint.id,
+        role: params.role,
+        prompt: params.prompt,
+        model: params.model,
+        effort: params.effort,
+      });
+      return { started: result.member.callSign, model: result.member.model, effort: result.member.effort };
+    }
+
+    case 'team.prompt': {
+      leadOnly('prompt workers');
+      const wanted = String(params.worker || '').toLowerCase();
+      const target = members.find(
+        (node) => node.id === params.worker || String(node.callSign).toLowerCase() === wanted
+      );
+      if (!target) throw new Error(`no worker "${params.worker}" in team ${joint.name}`);
+      if (target === caller) throw new Error('you cannot prompt yourself');
+      const text = String(params.text || '').trim();
+      if (!text) throw new Error('prompt_worker needs text');
+      await handle(ctx, 'agent.send', {
+        agent: target.id,
+        text: `[From ${caller.callSign}, your team lead] ${text}`,
+      });
+      return { sent: target.callSign };
+    }
+
+    case 'team.brief':
+      leadOnly('edit the brief');
+      return handle(ctx, params.append ? 'joint.context.append' : 'joint.context.set', {
+        joint: joint.id,
+        text: params.text,
+      });
+
+    default:
+      throw new Error(`unknown team method "${method}"`);
+  }
+}
+
 export function initControl(ctx) {
-  window.api.control.onRequest(async ({ id, method, params }) => {
+  window.api.control.onRequest(async ({ id, method, params, caller }) => {
     try {
-      const result = await handle(ctx, method, params || {});
+      // A team agent's token only ever reaches the team tools.
+      const result = caller
+        ? await teamHandle(ctx, method, params || {}, caller)
+        : await handle(ctx, method, params || {});
       window.api.control.respond({ id, result });
     } catch (error) {
       window.api.control.respond({ id, error: String((error && error.message) || error) });

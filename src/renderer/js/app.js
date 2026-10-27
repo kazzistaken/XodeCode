@@ -13,6 +13,7 @@ import { initQuick } from './quick.js';
 import { initVoice } from './voice.js';
 import { initNotifications } from './notifications.js';
 import { initDock } from './dock.js';
+import { initHierarchy } from './hierarchy.js';
 import { initSettings } from './settings.js';
 import { initPages } from './pages.js';
 import { initControl, normalizeModel, normalizeEffort, canvasSummary } from './control.js';
@@ -178,6 +179,7 @@ initMenubar(ctx);
 
 canvas.mountAll();
 initControl(ctx);
+initHierarchy(canvas);
 
 /* ----------------------------- director ----------------------------- */
 

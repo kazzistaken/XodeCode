@@ -1,17 +1,18 @@
 import { el, uid, truncate } from './util.js';
-import { icon } from './icons.js';
 import { store } from './store.js';
 import { buildNodeChrome, statusClass } from './node-chrome.js';
-import { renderRich } from './richtext.js';
+import { renderMessage, welcomeBox, spinnerRow } from './ccview.js';
 
 /**
- * Claude GUI mode — a Claude agent rendered as Claude Desktop's chat view
- * (just the conversation: transcript, composer, model + effort pickers).
+ * Claude GUI mode — a Claude agent rendered exactly like the Claude Code
+ * terminal UI: the welcome box, "> prompt" lines, ⏺ bullets, tool calls with
+ * their ⎿ results and diffs, the ✻ spinner, and the bordered input box with
+ * slash commands — but drawn as crisp, scalable HTML instead of an xterm.
  *
  * It talks to `claude -p --output-format stream-json`, resuming the same
  * session for every message. Each conversation is saved to disk
- * (userData/chats/<id>.json), so chats survive restarts, and the history
- * menu reopens any earlier one in this window.
+ * (userData/chats/<id>.json), so chats survive restarts, and /resume (or the
+ * history button) reopens any earlier one in this window.
  */
 
 const MODELS = [
@@ -20,8 +21,23 @@ const MODELS = [
   { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
 ];
+const MODEL_ALIASES = {
+  sonnet: 'claude-sonnet-5-5',
+  opus: 'claude-opus-5-5',
+  haiku: 'claude-haiku-5-5',
+  fable: 'claude-fable-5-1',
+};
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const MAX_MESSAGES = 600;
+
+const SLASH_COMMANDS = [
+  { name: '/clear', desc: 'Start a new conversation' },
+  { name: '/resume', desc: 'Resume an earlier conversation' },
+  { name: '/model', desc: 'Set the model (sonnet, opus, haiku, fable)' },
+  { name: '/effort', desc: 'Set the effort (low, medium, high, xhigh, max)' },
+  { name: '/cost', desc: 'Show what this conversation has cost' },
+  { name: '/help', desc: 'Show the commands' },
+];
 
 let wired = false;
 const handlers = new Map();
@@ -43,55 +59,21 @@ function relativeTime(at) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-/** A pill that opens a small menu of choices (model / effort). */
-function pickerPill(options, value, onPick, label) {
-  const text = el('span', { class: 'cx-pill-text' });
-  const pill = el(
-    'button',
-    { class: 'cx-pill', type: 'button', 'aria-label': label, title: label },
-    text,
-    el('span', { class: 'cx-pill-caret', html: icon('chevronDown') })
-  );
-  let current = value;
-  const show = () => {
-    text.textContent = options.find((option) => option.id === current)?.label || current;
-  };
-  show();
-  pill.addEventListener('click', (event) => {
-    event.stopPropagation();
-    openMenu(
-      pill,
-      options.map((option) => ({
-        label: option.label,
-        active: option.id === current,
-        onClick: () => {
-          current = option.id;
-          show();
-          onPick(option.id);
-        },
-      }))
-    );
-  });
-  return {
-    el: pill,
-    set: (next) => {
-      current = next;
-      show();
-    },
-  };
+function modelLabel(id) {
+  return MODELS.find((model) => model.id === id)?.label || id;
 }
 
 /** Small anchored menu; closes on outside click or Escape. */
 function openMenu(anchor, items, { className = '', empty = 'Nothing here yet' } = {}) {
-  document.querySelector('.cx-menu')?.remove();
-  const menu = el('div', { class: `cx-menu ${className}` });
-  if (!items.length) menu.append(el('div', { class: 'cx-menu-empty', text: empty }));
+  document.querySelector('.cc-menu')?.remove();
+  const menu = el('div', { class: `cc-menu ${className}` });
+  if (!items.length) menu.append(el('div', { class: 'cc-menu-empty', text: empty }));
   for (const item of items) {
     menu.append(
       el(
         'button',
         {
-          class: `cx-menu-item${item.active ? ' is-active' : ''}`,
+          class: `cc-menu-item${item.active ? ' is-active' : ''}`,
           type: 'button',
           onclick: (event) => {
             event.stopPropagation();
@@ -99,9 +81,9 @@ function openMenu(anchor, items, { className = '', empty = 'Nothing here yet' } 
             item.onClick();
           },
         },
-        el('span', { class: 'cx-menu-label', text: item.label }),
-        item.hint ? el('span', { class: 'cx-menu-hint', text: item.hint }) : null,
-        item.active ? el('span', { class: 'cx-menu-check', html: icon('check') }) : null
+        el('span', { class: 'cc-menu-mark', text: item.active ? '❯' : ' ' }),
+        el('span', { class: 'cc-menu-label', text: item.label }),
+        item.hint ? el('span', { class: 'cc-menu-hint', text: item.hint }) : null
       )
     );
   }
@@ -109,9 +91,8 @@ function openMenu(anchor, items, { className = '', empty = 'Nothing here yet' } 
   const rect = anchor.getBoundingClientRect();
   const width = menu.offsetWidth;
   const height = menu.offsetHeight;
-  const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left));
+  menu.style.left = `${Math.min(window.innerWidth - width - 8, Math.max(8, rect.left))}px`;
   const above = rect.top - height - 6;
-  menu.style.left = `${left}px`;
   menu.style.top = `${above > 8 ? above : rect.bottom + 6}px`;
   const dismiss = (event) => {
     if (event.type === 'keydown' && event.key !== 'Escape') return;
@@ -130,7 +111,7 @@ function openMenu(anchor, items, { className = '', empty = 'Nothing here yet' } 
 /**
  * @param {object} meta  the node
  * @param {object} canvas
- * @param {{ session?: { set: Function, clear: Function }, appendPrompt?: string }} [options]
+ * @param {{ session?: { set: Function, clear: Function }, appendPrompt?: string | (() => string) }} [options]
  */
 export function createChatView(meta, canvas, options = {}) {
   ensureWired();
@@ -144,6 +125,7 @@ export function createChatView(meta, canvas, options = {}) {
     id: meta.chatId,
     title: '',
     sessionId: meta.chatSessionId || '',
+    cost: 0,
     messages: Array.isArray(meta.messages) ? meta.messages : [],
   };
   delete meta.messages;
@@ -152,82 +134,61 @@ export function createChatView(meta, canvas, options = {}) {
     brand: 'claude',
     iconName: 'claude',
     actions: [
-      { icon: 'history', title: 'Recent chats', onClick: (event) => showHistory(event) },
-      { icon: 'compose', title: 'New chat', onClick: () => newChat() },
+      { icon: 'history', title: 'Resume a conversation (/resume)', onClick: (event) => showHistory(event?.currentTarget) },
+      { icon: 'compose', title: 'New conversation (/clear)', onClick: () => newChat() },
       { icon: 'x', title: 'Close', danger: true, onClick: () => canvas.closeNode(meta.id) },
     ],
   });
   chrome.titleEl.textContent = meta.callSign;
-  chrome.subEl.textContent = meta.title || 'Claude';
+  chrome.subEl.textContent = meta.title || 'Claude Code';
 
-  const log = el('div', { class: 'cx-log' });
-  const scroller = el('div', { class: 'cx-scroll' }, el('div', { class: 'cx-column' }, log));
+  const cwd = () => meta.cwd || store.page?.workspace || store.state.workspace || '';
+
+  /* ------------------------------ layout ------------------------------ */
+
+  const log = el('div', { class: 'cc-log' });
+  const scroller = el('div', { class: 'cc-scroll' }, log);
 
   const input = el('textarea', {
-    class: 'cx-input',
+    class: 'cc-input',
     rows: '1',
-    placeholder: 'Reply to Claude…',
+    placeholder: 'Try "how does <filepath> work?"',
     spellcheck: 'false',
   });
-  const sendBtn = el('button', {
-    class: 'cx-send',
-    type: 'button',
-    title: 'Send',
-    'aria-label': 'Send',
-    html: icon('arrowUp'),
-  });
-  const modelPill = pickerPill(MODELS, meta.model, (id) => {
-    meta.model = id;
-    store.save();
-    persist();
-  }, 'Model');
-  const effortPill = pickerPill(
-    EFFORTS.map((effort) => ({ id: effort, label: effort })),
-    meta.effort,
-    (id) => {
-      meta.effort = id;
-      store.save();
-      persist();
-    },
-    'Effort'
-  );
-  const composer = el(
-    'div',
-    { class: 'cx-composer' },
-    input,
-    el(
-      'div',
-      { class: 'cx-composer-bar' },
-      modelPill.el,
-      effortPill.el,
-      el('span', { class: 'cx-spacer' }),
-      sendBtn
-    )
-  );
+  const inputBox = el('div', { class: 'cc-input-box' }, el('span', { class: 'cc-prompt', text: '>' }), input);
+  const slash = el('div', { class: 'cc-slash' });
+  const hint = el('span', { class: 'cc-hint' });
+  const modelEl = el('button', { class: 'cc-model', type: 'button', title: 'Model and effort' });
+  const footer = el('div', { class: 'cc-footer' }, hint, modelEl);
 
-  chrome.body.classList.add('cx-body');
-  chrome.body.append(scroller, el('div', { class: 'cx-dock' }, el('div', { class: 'cx-column' }, composer)));
+  chrome.body.classList.add('cc-body');
+  chrome.body.append(scroller, el('div', { class: 'cc-dock' }, slash, inputBox, footer));
 
   let busy = false;
   let streaming = null;
+  let spinner = null;
   let saveTimer = null;
+  let historyIndex = -1;
 
   function persist() {
     if (chat.messages.length > MAX_MESSAGES) chat.messages = chat.messages.slice(-MAX_MESSAGES);
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      window.api.chats
-        .save({
-          id: chat.id,
-          title: chat.title,
-          sessionId: chat.sessionId,
-          model: meta.model,
-          effort: meta.effort,
-          cwd: meta.cwd || '',
-          messages: chat.messages,
-        })
-        .catch(() => {});
-    }, 300);
+    saveTimer = setTimeout(save, 300);
+  }
+
+  function save() {
+    return window.api.chats
+      .save({
+        id: chat.id,
+        title: chat.title,
+        sessionId: chat.sessionId,
+        cost: chat.cost,
+        model: meta.model,
+        effort: meta.effort,
+        cwd: meta.cwd || '',
+        messages: chat.messages,
+      })
+      .catch(() => {});
   }
 
   function setStatus(status) {
@@ -237,74 +198,35 @@ export function createChatView(meta, canvas, options = {}) {
     store.emit('status', meta);
   }
 
-  /* ----------------------------- rendering ----------------------------- */
-
-  function row(message) {
-    if (message.role === 'user') {
-      return el('div', { class: 'cx-row is-user' }, el('div', { class: 'cx-bubble', text: message.text }));
-    }
-    if (message.role === 'tool') {
-      return el(
-        'div',
-        { class: 'cx-tool' },
-        el('span', { class: 'cx-tool-name', text: message.text }),
-        message.detail ? el('span', { class: 'cx-tool-detail', text: message.detail }) : null
-      );
-    }
-    if (message.role === 'meta') return el('div', { class: 'cx-meta', text: message.text });
-    if (message.role === 'error') return el('div', { class: 'cx-error', text: message.text });
-    const body = el('div', { class: 'cx-text' });
-    body.innerHTML = renderRich(message.text);
-    return el('div', { class: 'cx-row is-assistant' }, body);
+  function syncFooter() {
+    const bypass = store.state.settings.agentFullPermissions !== false;
+    hint.className = `cc-hint${bypass ? ' is-bypass' : ''}`;
+    hint.textContent = busy
+      ? 'esc to interrupt'
+      : bypass
+        ? '⏵⏵ bypass permissions on'
+        : '? for shortcuts';
+    modelEl.textContent = `${modelLabel(meta.model)} · ${meta.effort}`;
   }
 
-  function emptyState() {
-    return el(
-      'div',
-      { class: 'cx-hello' },
-      el('span', { class: 'cx-hello-mark', html: icon('claude') }),
-      el('h2', { text: greeting() }),
-      el('p', { text: meta.cwd || store.page?.workspace || 'Claude Code · this tab’s workspace' })
-    );
-  }
-
-  function greeting() {
-    const hour = new Date().getHours();
-    if (hour < 5 || hour >= 22) return 'Burning the midnight oil?';
-    if (hour < 12) return 'Good morning';
-    if (hour < 18) return 'Good afternoon';
-    return 'Good evening';
-  }
-
-  function thinking() {
-    return el(
-      'div',
-      { class: 'cx-row is-assistant' },
-      el('span', { class: 'cx-spark', html: icon('claude') }),
-      el('span', { class: 'cx-thinking-label', text: 'Thinking…' })
-    );
-  }
+  /* ----------------------------- rendering ---------------------------- */
 
   function render() {
-    const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 60;
-    if (!chat.messages.length && !busy) {
-      log.replaceChildren(emptyState());
-      chrome.root.classList.add('is-empty-chat');
-    } else {
-      chrome.root.classList.remove('is-empty-chat');
-      const rows = chat.messages.map(row);
-      if (busy && !streaming) rows.push(thinking());
-      log.replaceChildren(...rows);
+    const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    const rows = [welcomeBox(cwd())];
+    for (const message of chat.messages) {
+      rows.push(renderMessage(message, { cwd: cwd(), running: busy && message.role === 'tool' && !message.result }));
     }
+    if (busy) {
+      // One spinner per turn, so its timer keeps counting across re-renders.
+      if (!spinner) spinner = spinnerRow();
+      rows.push(spinner);
+    } else {
+      spinner = null;
+    }
+    log.replaceChildren(...rows);
     if (nearBottom || busy) scroller.scrollTop = scroller.scrollHeight;
-    sendBtn.innerHTML = icon(busy ? 'stop' : 'arrowUp');
-    sendBtn.title = busy ? 'Stop' : 'Send';
-    sendBtn.classList.toggle('is-stop', busy);
-    syncSend();
-  }
-
-  function syncSend() {
-    sendBtn.disabled = !busy && !input.value.trim();
+    syncFooter();
   }
 
   function add(role, text, extra = {}) {
@@ -313,9 +235,15 @@ export function createChatView(meta, canvas, options = {}) {
     render();
   }
 
-  /* ------------------------------ actions ------------------------------ */
+  /** A line from the app itself (slash command output), like Claude Code's dim notices. */
+  function notice(text) {
+    add('meta', text);
+  }
+
+  /* ------------------------------ actions ----------------------------- */
 
   function stop() {
+    if (!busy) return;
     try {
       window.api.claude.cancel({ nodeId: meta.id });
     } catch {
@@ -324,7 +252,7 @@ export function createChatView(meta, canvas, options = {}) {
     busy = false;
     streaming = null;
     setStatus('idle');
-    render();
+    add('error', 'Interrupted by user');
   }
 
   function newChat() {
@@ -332,10 +260,11 @@ export function createChatView(meta, canvas, options = {}) {
     chat.id = uid('chat');
     chat.title = '';
     chat.sessionId = '';
+    chat.cost = 0;
     chat.messages = [];
     meta.chatId = chat.id;
     meta.chatSessionId = '';
-    meta.title = 'New chat';
+    meta.title = 'New conversation';
     syncTitles();
     store.save();
     render();
@@ -349,17 +278,12 @@ export function createChatView(meta, canvas, options = {}) {
     chat.id = saved.id;
     chat.title = saved.title || '';
     chat.sessionId = saved.sessionId || '';
+    chat.cost = Number(saved.cost) || 0;
     chat.messages = Array.isArray(saved.messages) ? saved.messages : [];
     meta.chatId = chat.id;
     meta.chatSessionId = chat.sessionId;
-    if (saved.model) {
-      meta.model = saved.model;
-      modelPill.set(saved.model);
-    }
-    if (saved.effort) {
-      meta.effort = saved.effort;
-      effortPill.set(saved.effort);
-    }
+    if (saved.model) meta.model = saved.model;
+    if (saved.effort) meta.effort = saved.effort;
     if (chat.title) meta.title = chat.title;
     syncTitles();
     store.save();
@@ -368,24 +292,104 @@ export function createChatView(meta, canvas, options = {}) {
     return true;
   }
 
-  async function showHistory(event) {
-    const anchor = event?.currentTarget || chrome.actionsEl;
+  async function showHistory(anchor) {
     const list = await window.api.chats.list().catch(() => []);
     openMenu(
-      anchor,
+      anchor || inputBox,
       list.map((item) => ({
         label: truncate(item.title, 52),
         hint: relativeTime(item.updatedAt),
         active: item.id === chat.id,
         onClick: () => loadChat(item.id),
       })),
-      { className: 'cx-history', empty: 'No saved chats yet' }
+      { className: 'cc-history', empty: 'No conversations to resume' }
     );
+  }
+
+  function setModel(id) {
+    meta.model = id;
+    store.save();
+    persist();
+    syncFooter();
+  }
+
+  function setEffort(effort) {
+    meta.effort = effort;
+    store.save();
+    persist();
+    syncFooter();
+  }
+
+  function pickModel() {
+    openMenu(
+      modelEl,
+      [
+        ...MODELS.map((model) => ({
+          label: model.label,
+          active: model.id === meta.model,
+          onClick: () => {
+            setModel(model.id);
+            notice(`Set model to ${model.label}`);
+          },
+        })),
+        ...EFFORTS.map((effort) => ({
+          label: `effort: ${effort}`,
+          active: effort === meta.effort,
+          onClick: () => {
+            setEffort(effort);
+            notice(`Set effort to ${effort}`);
+          },
+        })),
+      ],
+      { className: 'cc-model-menu' }
+    );
+  }
+
+  /** Slash commands, handled locally like Claude Code's built-ins. */
+  function runSlash(text) {
+    const [command, ...rest] = text.trim().split(/\s+/);
+    const arg = rest.join(' ').toLowerCase();
+    switch (command.toLowerCase()) {
+      case '/clear':
+      case '/new':
+        newChat();
+        return true;
+      case '/resume':
+        showHistory(inputBox);
+        return true;
+      case '/model': {
+        if (!arg) {
+          pickModel();
+          return true;
+        }
+        const id = MODEL_ALIASES[arg] || MODELS.find((model) => model.id === arg)?.id || arg;
+        setModel(id);
+        notice(`Set model to ${modelLabel(id)}`);
+        return true;
+      }
+      case '/effort':
+        if (EFFORTS.includes(arg)) {
+          setEffort(arg);
+          notice(`Set effort to ${arg}`);
+        } else {
+          notice(`Effort is ${meta.effort}. Use /effort ${EFFORTS.join(' | ')}`);
+        }
+        return true;
+      case '/cost':
+        notice(`Total cost: $${chat.cost.toFixed(4)}`);
+        return true;
+      case '/help':
+        notice(SLASH_COMMANDS.map((item) => `${item.name.padEnd(9)} ${item.desc}`).join('\n'));
+        return true;
+      default:
+        return false;
+    }
   }
 
   async function sendText(raw) {
     const text = String(raw || '').trim();
     if (!text) return false;
+    if (text.startsWith('/') && runSlash(text)) return true;
     if (busy) stop();
     busy = true;
     streaming = null;
@@ -404,9 +408,12 @@ export function createChatView(meta, canvas, options = {}) {
         message: text,
         model: meta.model,
         effort: meta.effort,
-        appendPrompt: options.appendPrompt || '',
-        cwd: meta.cwd || store.page?.workspace || store.state.workspace || '',
+        // Read fresh each turn so a promotion or team move applies to the next message.
+        appendPrompt:
+          (typeof options.appendPrompt === 'function' ? options.appendPrompt() : options.appendPrompt) || '',
+        cwd: cwd(),
         fullPermissions: store.state.settings.agentFullPermissions !== false,
+        team: Boolean(meta.joint),
       });
     } catch (error) {
       busy = false;
@@ -417,13 +424,12 @@ export function createChatView(meta, canvas, options = {}) {
   }
 
   function submit() {
-    if (busy && !input.value.trim()) {
-      stop();
-      return;
-    }
     const text = input.value;
+    if (!text.trim()) return;
     input.value = '';
+    historyIndex = -1;
     autosize();
+    showSlash();
     sendText(text);
   }
 
@@ -450,7 +456,24 @@ export function createChatView(meta, canvas, options = {}) {
     }
     if (payload.type === 'tool') {
       streaming = null;
-      add('tool', payload.name || 'tool', { detail: payload.detail || '' });
+      chat.messages.push({
+        role: 'tool',
+        id: payload.id,
+        tool: payload.tool || payload.name,
+        input: payload.input || {},
+        at: Date.now(),
+      });
+      persist();
+      render();
+      return;
+    }
+    if (payload.type === 'tool-result') {
+      const call = [...chat.messages].reverse().find((message) => message.role === 'tool' && message.id === payload.id);
+      if (call) {
+        call.result = { isError: payload.isError, text: payload.text || '', lines: payload.lines || 0 };
+        persist();
+        render();
+      }
       return;
     }
     if (payload.type === 'tool-error') return;
@@ -459,12 +482,12 @@ export function createChatView(meta, canvas, options = {}) {
       streaming = null;
       setStatus('idle');
       if (payload.costUsd) {
+        chat.cost += Number(payload.costUsd) || 0;
         store.addSpend(payload.costUsd, meta.model);
-        const seconds = payload.durationMs ? ` · ${(payload.durationMs / 1000).toFixed(1)}s` : '';
-        add('meta', `$${Number(payload.costUsd).toFixed(3)}${seconds}`);
-      } else {
-        render();
       }
+      if (!payload.ok && payload.result) add('error', String(payload.result));
+      persist();
+      render();
       return;
     }
     if (payload.type === 'error') {
@@ -486,30 +509,111 @@ export function createChatView(meta, canvas, options = {}) {
   handlers.set(meta.id, onEvent);
   options.session?.set({ write: (text) => sendText(text) });
 
+  /* ------------------------------- input ------------------------------ */
+
   function autosize() {
     input.style.height = 'auto';
-    input.style.height = `${Math.min(200, Math.max(24, input.scrollHeight))}px`;
-    syncSend();
+    input.style.height = `${Math.min(220, Math.max(20, input.scrollHeight))}px`;
   }
 
-  function syncTitles() {
-    chrome.titleEl.textContent = meta.callSign;
-    chrome.subEl.textContent = meta.title || 'Claude';
+  function showSlash() {
+    const value = input.value;
+    if (!value.startsWith('/') || /\s/.test(value)) {
+      slash.replaceChildren();
+      slash.classList.remove('is-open');
+      return;
+    }
+    const matches = SLASH_COMMANDS.filter((item) => item.name.startsWith(value.toLowerCase()));
+    slash.replaceChildren(
+      ...matches.map((item, index) =>
+        el(
+          'button',
+          {
+            class: `cc-slash-item${index === 0 ? ' is-active' : ''}`,
+            type: 'button',
+            onclick: () => {
+              input.value = `${item.name} `;
+              input.focus();
+              showSlash();
+            },
+          },
+          el('span', { class: 'cc-slash-name', text: item.name }),
+          el('span', { class: 'cc-slash-desc', text: item.desc })
+        )
+      )
+    );
+    slash.classList.toggle('is-open', matches.length > 0);
   }
 
-  input.addEventListener('input', autosize);
+  function pastPrompts() {
+    return chat.messages.filter((message) => message.role === 'user').map((message) => message.text);
+  }
+
+  input.addEventListener('input', () => {
+    autosize();
+    showSlash();
+  });
   input.addEventListener('keydown', (event) => {
     event.stopPropagation();
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
+      // Enter on a half-typed slash command completes it first.
+      const first = slash.querySelector('.cc-slash-item');
+      if (first && slash.classList.contains('is-open') && !input.value.includes(' ')) {
+        const name = first.querySelector('.cc-slash-name').textContent;
+        if (name !== input.value.trim()) {
+          input.value = name;
+        }
+      }
       submit();
+    } else if (event.key === 'Tab' && slash.classList.contains('is-open')) {
+      event.preventDefault();
+      slash.querySelector('.cc-slash-item')?.click();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (busy) stop();
+      else {
+        input.value = '';
+        autosize();
+        showSlash();
+      }
+    } else if (event.key === 'ArrowUp' && !input.value.includes('\n') && input.selectionStart === 0) {
+      // Up/Down walk through earlier prompts, like the terminal.
+      const past = pastPrompts();
+      if (!past.length) return;
+      event.preventDefault();
+      historyIndex = historyIndex < 0 ? past.length - 1 : Math.max(0, historyIndex - 1);
+      input.value = past[historyIndex];
+      autosize();
+    } else if (event.key === 'ArrowDown' && historyIndex >= 0 && !input.value.includes('\n')) {
+      event.preventDefault();
+      const past = pastPrompts();
+      historyIndex += 1;
+      input.value = historyIndex < past.length ? past[historyIndex] : '';
+      if (historyIndex >= past.length) historyIndex = -1;
+      autosize();
     }
   });
-  sendBtn.addEventListener('click', submit);
-  composer.addEventListener('pointerdown', (event) => {
+  modelEl.addEventListener('click', (event) => {
     event.stopPropagation();
-    if (event.target === composer) input.focus();
+    pickModel();
   });
+  for (const node of [inputBox, footer, slash]) {
+    node.addEventListener('pointerdown', (event) => {
+      event.stopPropagation();
+      if (event.target === inputBox) input.focus();
+    });
+  }
+  // Clicking the transcript (not selecting text) puts the cursor in the box.
+  scroller.addEventListener('click', () => {
+    if (!window.getSelection()?.toString()) input.focus();
+  });
+  const offSettings = store.on('settings', syncFooter);
+
+  function syncTitles() {
+    chrome.titleEl.textContent = meta.callSign;
+    chrome.subEl.textContent = meta.title || 'Claude Code';
+  }
 
   // Load the saved conversation, then run the task this agent was spawned with.
   render();
@@ -519,6 +623,7 @@ export function createChatView(meta, canvas, options = {}) {
       if (saved && Array.isArray(saved.messages) && saved.messages.length >= chat.messages.length) {
         chat.title = saved.title || chat.title;
         chat.sessionId = saved.sessionId || chat.sessionId;
+        chat.cost = Number(saved.cost) || 0;
         chat.messages = saved.messages;
         render();
         scroller.scrollTop = scroller.scrollHeight;
@@ -550,21 +655,18 @@ export function createChatView(meta, canvas, options = {}) {
       chat.messages
         .filter((message) => message.role === 'user' || message.role === 'assistant')
         .slice(-4)
-        .map((message) => `${message.role === 'user' ? 'You' : 'Claude'}: ${truncate(message.text.replace(/\s+/g, ' '), 220)}`)
+        .map((message) => `${message.role === 'user' ? '>' : '⏺'} ${truncate(message.text.replace(/\s+/g, ' '), 220)}`)
         .join('\n\n'),
     setModel: (model) => {
-      meta.model = model;
-      modelPill.set(model);
-      persist();
+      setModel(model);
     },
     setEffort: (effort) => {
-      meta.effort = effort;
-      effortPill.set(effort);
-      persist();
+      setEffort(effort);
     },
     resize: () => {},
     destroy: () => {
       handlers.delete(meta.id);
+      offSettings();
       options.session?.clear();
       clearTimeout(saveTimer);
       if (busy) {
@@ -574,18 +676,8 @@ export function createChatView(meta, canvas, options = {}) {
           /* ignore */
         }
       }
-      // Flush the last state so nothing typed is lost.
-      window.api.chats
-        .save({
-          id: chat.id,
-          title: chat.title,
-          sessionId: chat.sessionId,
-          model: meta.model,
-          effort: meta.effort,
-          cwd: meta.cwd || '',
-          messages: chat.messages,
-        })
-        .catch(() => {});
+      // Flush the last state so nothing is lost.
+      save();
     },
   };
 }

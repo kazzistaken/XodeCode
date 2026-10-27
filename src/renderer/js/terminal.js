@@ -14,9 +14,21 @@ const CLI_LABEL = { claude: 'Claude Code', shell: 'Terminal' };
 
 /** Extra system prompt for a JointedAgents team member. */
 function jointAppendPrompt(meta) {
+  const lead = meta.parentId ? store.findNode(meta.parentId)?.node : null;
+  const role =
+    meta.rank === 'lead'
+      ? 'You are the team LEAD: you own the brief and the split of work, keep file ownership clear,' +
+        ' review what the workers change, and resolve conflicts between them. The user and the' +
+        ' Director (the app\'s AI agent) outrank you. Use your team tools: `team` to see members and' +
+        ' their reports, `spawn_worker` to add a worker (max 4), `prompt_worker` to give one a task,' +
+        ' `brief` to edit the shared brief, and `report` to report up when the team is done or blocked.'
+      : `You are a WORKER on this team${lead ? `; your lead is ${lead.callSign}` : ''}. Follow the` +
+        ' split in the brief. Use your team tools: `team` to see the team, and `report` to tell your' +
+        ' lead when you are done, blocked or have a question.';
   return [
     `You are one member of a jointed team ("${meta.jointName || meta.joint}") — several agents`,
     'working on different parts of the same task in the same folder.',
+    role,
     `The team shares one brief at ${meta.jointContextPath}. Read and follow it before you begin,`,
     'and keep it current (append decisions, the files you own, interfaces, open questions) so',
     'teammates do not duplicate work or collide. Stay in your lane and do not edit files another',
@@ -121,7 +133,7 @@ function createTerminalView(meta, canvas) {
         set: (session) => sessions.set(meta.id, session),
         clear: () => sessions.delete(meta.id),
       },
-      appendPrompt: meta.joint ? jointAppendPrompt(meta) : undefined,
+      appendPrompt: () => (meta.joint ? jointAppendPrompt(meta) : undefined),
     });
   }
 
@@ -405,6 +417,9 @@ function createTerminalView(meta, canvas) {
         effort: meta.effort || undefined,
         appendPrompt: meta.joint ? jointAppendPrompt(meta) : undefined,
         fullPermissions: store.state.settings.agentFullPermissions !== false,
+        // Team members get their own rank-checked team tools.
+        nodeId: meta.id,
+        team: Boolean(meta.joint),
       })
       .then((result) => {
         if (destroyed) {
@@ -592,8 +607,18 @@ registerNodeType('terminal', createTerminalView);
  * ------------------------------------------------------------------ */
 
 export function spawnTerminal(canvas, options = {}) {
-  const { cli = 'claude', prompt = '', title, model, effort, joint, jointName, jointContextPath } =
-    options;
+  const {
+    cli = 'claude',
+    prompt = '',
+    title,
+    model,
+    effort,
+    joint,
+    jointName,
+    jointContextPath,
+    rank,
+    parentId,
+  } = options;
   // Each tab has its own workspace; fall back to the global one, then home.
   const cwd = options.cwd || store.page?.workspace || store.state.workspace || '';
   const used = new Set(store.allNodes().map((node) => node.callSign));
@@ -619,6 +644,8 @@ export function spawnTerminal(canvas, options = {}) {
     joint: joint || null,
     jointName: jointName || '',
     jointContextPath: jointContextPath || '',
+    rank: joint ? rank || null : null,
+    parentId: joint ? parentId || null : null,
   });
 }
 

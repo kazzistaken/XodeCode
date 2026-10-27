@@ -35,7 +35,7 @@ function defaults() {
       directorEffort: 'low',
       background: '',
       backgroundFit: 'contain',
-      guiTerminals: false,
+      guiTerminals: true,
       agentFullPermissions: true,
       budgetUsd: 0,
       showTitles: true,
@@ -67,6 +67,10 @@ function normalizeNode(node) {
     joint: node.joint || null,
     jointName: node.jointName || '',
     jointContextPath: node.jointContextPath || '',
+    // Hierarchy: only joint members carry a rank (see hierarchy.js).
+    rank: node.joint ? node.rank || null : null,
+    parentId: node.joint ? node.parentId || null : null,
+    lastReport: node.joint && node.lastReport ? node.lastReport : null,
     // Never re-run a saved prompt when restoring a session on launch.
     prompt: '',
     status: 'idle',

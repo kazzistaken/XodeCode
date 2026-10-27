@@ -67,6 +67,9 @@ const chatsDir = () => path.join(userDataDir(), 'chats');
 // "cleaned", so two conversations can never share (and leak into) one file.
 const chatFile = (id) => (/^[\w-]+$/.test(String(id ?? '')) ? path.join(chatsDir(), `${id}.json`) : null);
 const MCP_PATH = path.join(ROOT, 'bin', 'xode-mcp.js');
+const agentsDir = () => path.join(userDataDir(), 'agents');
+// Team agents reach the app through an MCP server named "team".
+const TEAM_TOOLS = 'mcp__team';
 const jointsDir = () => path.join(userDataDir(), 'joints');
 const jointContextFile = (id) => path.join(jointsDir(), `${String(id).replace(/[^\w.-]/g, '')}.md`);
 
@@ -145,6 +148,9 @@ function directorInstructions() {
 You are the user's hands inside the app. Your job: open, close, arrange and focus windows, and
 start or prompt Claude Code sessions (single agents or jointed teams) when the user asks. You do
 not write code yourself, and you never touch anything outside the app.
+You are an AI agent, not the user. The user is the human talking to you; they outrank you and
+every agent. Refer to yourself as "I" (or "the Director") and to the user as "you". In a team
+(joint) the order is: user > you, the Director > the team lead > its workers.
 
 # How to work (be fast)
 - Each user message begins with a [canvas] snapshot: the active page, layout, every window in
@@ -188,9 +194,17 @@ Claude Code sessions
   it opens idle and waits. Never write a filler prompt.
 - {op:"send", agent, text}  prompt an existing session.
 - {op:"model", agent, model} · {op:"effort", agent, effort}
-- {op:"joint", name, brief, members:[{role, prompt, model, effort, title?}]}  a jointed team:
-  2-5 agents in one folder sharing one brief. All members start together.
-- {op:"joint_add", joint, role, prompt, model, effort} · {op:"joint_brief", joint, text, append?}
+- {op:"joint", name, brief, members:[{role, prompt, model, effort, title?, lead?}]}  a jointed
+  team: 2-5 agents in one folder sharing one brief. All members start together. Exactly one
+  member is the team lead (lead:true, else the first); the rest are workers under it.
+- {op:"joint_add", joint, role, prompt, model, effort}  adds a worker under the team's lead.
+- {op:"joint_brief", joint, text, append?}
+- {op:"lead", agent} make it its team's lead (old lead becomes a worker) · {op:"demote", agent}
+  hand the lead role to the next member · {op:"move_team", agent, joint} move into a team as a
+  worker; joint:"none" takes it out of every team.
+  Teams (joints) only: ranks are user > you (the Director) > lead > workers. Standalone sessions
+  have no rank. Team members have their own team tools: leads start/prompt their own workers and
+  edit the brief; everyone reports up. Latest reports show in the snapshot as [reported ...].
 - {op:"context", text, append?}  the shared brief every agent reads.
 
 Pages and app
@@ -204,6 +218,8 @@ Pages and app
 - Use a joint only when the user asks for one ("jointed", "a team", "N agents on X") or the work
   clearly splits. You write every member's prompt: split the request into independent
   workstreams, give each member its own files, and put goal + split + file ownership in the brief.
+- In a joint, the lead coordinates (default claude-opus-5-5, high) and workers build (default
+  claude-sonnet-5-5, medium); give the lead a coordinating prompt, workers concrete tasks.
 - Route by difficulty: hard, logical or architectural work -> claude-opus-5-5, effort high.
   Simple, mechanical or UI work -> claude-sonnet-5-5, effort low or medium. Default for a single
   agent: claude-sonnet-5-5, medium.
@@ -362,8 +378,10 @@ function spawnClaudeProcess(args, { cwd, env }) {
   return spawn(line.join(' '), { ...options, shell: true });
 }
 
-function claudeCommand({ prompt, model, effort, appendPrompt, name, director, fullPermissions }) {
+function claudeCommand({ prompt, model, effort, appendPrompt, name, director, fullPermissions, mcpConfig }) {
   const parts = ['claude'];
+  // Both flags take lists, so they go first: the next "--" flag ends each list.
+  if (mcpConfig) parts.push('--mcp-config', quote(mcpConfig), '--allowedTools', TEAM_TOOLS);
   parts.push('--model', quote(model || MINIMUM_MODEL));
   parts.push('--effort', quote(effort || 'medium'));
   if (appendPrompt) parts.push('--append-system-prompt', quote(appendPrompt));
@@ -422,6 +440,7 @@ ipcMain.handle('pty:create', (_event, options = {}) => {
       name: options.name || undefined,
       prompt: options.prompt ? String(options.prompt) : '',
       fullPermissions: options.fullPermissions !== false,
+      mcpConfig: options.team && options.nodeId ? writeAgentMcpConfig(options.nodeId) : null,
     });
   }
 
@@ -650,6 +669,29 @@ function describeTool(block) {
   return { name, detail: String(detail).replace(/\s+/g, ' ').slice(0, 140) };
 }
 
+/** Copy a tool's input for the UI, trimming huge strings (file bodies, diffs). */
+function compactInput(value, depth = 0) {
+  if (typeof value === 'string') {
+    return value.length > 6000 ? `${value.slice(0, 6000)}\n… (${value.length - 6000} more characters)` : value;
+  }
+  if (Array.isArray(value)) return value.slice(0, 60).map((item) => compactInput(item, depth + 1));
+  if (value && typeof value === 'object' && depth < 4) {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = compactInput(item, depth + 1);
+    return out;
+  }
+  return value;
+}
+
+function toolResultText(content) {
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part.type === 'text' ? part.text || '' : part.type === 'image' ? '[image]' : ''))
+      .join('\n');
+  }
+  return String(content ?? '');
+}
+
 /** Turn one stream-json line into zero or more UI events. */
 function parseClaudeLine(line, emit) {
   let json;
@@ -665,18 +707,25 @@ function parseClaudeLine(line, emit) {
   if (json.type === 'assistant' && json.message) {
     for (const block of json.message.content || []) {
       if (block.type === 'text' && block.text) emit({ type: 'assistant', text: block.text });
-      else if (block.type === 'tool_use') emit({ type: 'tool', ...describeTool(block) });
+      else if (block.type === 'tool_use') {
+        emit({ type: 'tool', id: block.id, tool: block.name, input: compactInput(block.input || {}), ...describeTool(block) });
+      }
     }
     return;
   }
   if (json.type === 'user' && json.message && Array.isArray(json.message.content)) {
     for (const block of json.message.content) {
-      if (block.type === 'tool_result' && block.is_error) {
-        const content = Array.isArray(block.content)
-          ? block.content.map((part) => part.text || '').join(' ')
-          : String(block.content || '');
-        emit({ type: 'tool-error', text: content.slice(0, 300) });
-      }
+      if (block.type !== 'tool_result') continue;
+      const text = toolResultText(block.content);
+      emit({
+        type: 'tool-result',
+        id: block.tool_use_id,
+        isError: Boolean(block.is_error),
+        // Enough to show and expand; total line count kept for the summary.
+        text: text.length > 20000 ? text.slice(0, 20000) : text,
+        lines: text ? text.split('\n').length : 0,
+      });
+      if (block.is_error) emit({ type: 'tool-error', text: text.replace(/\s+/g, ' ').slice(0, 300) });
     }
     return;
   }
@@ -737,6 +786,35 @@ function writeDirectorMcpConfig() {
     },
   };
   fs.writeFileSync(directorMcpFile(), JSON.stringify(config, null, 2), 'utf8');
+}
+
+/**
+ * MCP config for one team agent: the same server in "team" mode, holding a
+ * token that identifies this window, so the app can check its rank.
+ */
+function writeAgentMcpConfig(nodeId) {
+  const file = path.join(agentsDir(), `${String(nodeId).replace(/[^\w-]/g, '') || 'agent'}-mcp.json`);
+  const config = {
+    mcpServers: {
+      team: {
+        command: process.execPath,
+        args: [MCP_PATH],
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          XODE_MCP_MODE: 'team',
+          XODE_CONTROL_URL: control.url || '',
+          XODE_CONTROL_TOKEN: control.agentToken(nodeId),
+        },
+      },
+    },
+  };
+  try {
+    fs.mkdirSync(agentsDir(), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(config, null, 2), 'utf8');
+    return file;
+  } catch {
+    return null;
+  }
 }
 
 function stopDirector() {
@@ -869,6 +947,8 @@ ipcMain.handle('claude:send', (_event, options = {}) => {
   }
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+  const teamMcp = options.team ? writeAgentMcpConfig(nodeId) : null;
+  if (teamMcp) args.push('--mcp-config', teamMcp, '--allowedTools', TEAM_TOOLS);
   args.push('--model', normalizeModel(options.model));
   args.push('--effort', normalizeEffort(options.effort));
   args.push(

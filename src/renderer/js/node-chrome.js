@@ -22,19 +22,11 @@ export function buildNodeChrome(meta, options = {}) {
       class: `node-ic brand-${brand}`,
       html: icon(iconName),
     });
-    const jointEl = meta.joint
-      ? el('span', {
-          class: 'node-joint',
-          text: meta.jointName || 'Joint',
-          title: `Jointed team: ${meta.jointName || meta.joint}`,
-        })
-      : null;
     head = el(
       'div',
       { class: 'node-head' },
       iconEl,
       el('div', { class: 'node-titles' }, titleEl, subEl),
-      jointEl,
       dotEl,
       actionsEl
     );

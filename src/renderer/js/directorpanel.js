@@ -2,6 +2,7 @@ import { $, el } from './util.js';
 import { icon } from './icons.js';
 import { store } from './store.js';
 import { renderRich } from './richtext.js';
+import { teamTree } from './hierarchy.js';
 
 /**
  * The Director, shown as chat.
@@ -166,6 +167,83 @@ export function initDirectorPanel(ctx) {
   return { setStatus, el: panel };
 }
 
+/**
+ * Collapsible org tree: Director > each team's lead > its workers. Only
+ * jointed teams appear; standalone sessions are outside the hierarchy.
+ */
+function buildTeamTree(ctx, close) {
+  const list = el('div', { class: 'dx-tree-list' });
+  const count = el('span', { class: 'dx-tree-count' });
+  const toggle = el(
+    'button',
+    { class: 'dx-tree-toggle', type: 'button', 'aria-expanded': 'true' },
+    el('span', { class: 'dx-tree-chev', html: icon('chevronDown') }),
+    el('span', { text: 'Teams' }),
+    count
+  );
+  const root = el('div', { class: 'dx-tree' }, toggle, list);
+  toggle.addEventListener('click', () => {
+    const open = root.classList.toggle('is-collapsed') === false;
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+
+  const row = (node, rank, color) => {
+    const report = node.lastReport;
+    const button = el(
+      'button',
+      {
+        class: `dx-tree-row is-${rank}`,
+        type: 'button',
+        style: { '--joint-color': color },
+        title: `Go to ${node.callSign}`,
+        onclick: () => {
+          ctx.canvas.focusAgent(node.id);
+          close();
+        },
+      },
+      el('span', { class: `dx-tree-dot is-${node.status || 'idle'}` }),
+      el('b', { text: node.callSign }),
+      el('span', { class: 'dx-tree-title', text: node.title || '' }),
+      el('span', { class: 'dx-tree-rank', text: rank === 'lead' ? 'Lead' : 'Worker' })
+    );
+    if (!report) return button;
+    return el(
+      'div',
+      { class: 'dx-tree-item' },
+      button,
+      el(
+        'div',
+        { class: `dx-tree-report is-${report.status}`, title: report.text },
+        el('b', { text: report.status }),
+        el('span', { text: report.text })
+      )
+    );
+  };
+
+  function paint() {
+    const teams = teamTree();
+    root.hidden = !teams.length;
+    count.textContent = String(teams.length);
+    list.replaceChildren(
+      ...teams.map(({ joint, lead, workers }) => {
+        const color = joint.color || '#cfcfcf';
+        return el(
+          'div',
+          { class: 'dx-team', style: { '--joint-color': color } },
+          el('div', { class: 'dx-team-name', text: joint.name }),
+          row(lead, 'lead', color),
+          el('div', { class: 'dx-team-workers' }, ...workers.map((node) => row(node, 'worker', color)))
+        );
+      })
+    );
+  }
+
+  paint();
+  const offTeams = store.on('teams', paint);
+  const offNodes = store.on('nodes', paint);
+  return { el: root, destroy: () => (offTeams(), offNodes()) };
+}
+
 /** The full Director conversation, styled like Claude Desktop's chat. */
 export function buildDirectorSheet(ctx, close) {
   const log = el('div', { class: 'dx-log' });
@@ -193,6 +271,7 @@ export function buildDirectorSheet(ctx, close) {
     el('div', { class: 'dx-composer-bar' }, modelTag, sendBtn)
   );
 
+  const tree = buildTeamTree(ctx, () => close());
   const statusDot = el('span', { class: 'director-panel-dot' });
   const statusText = el('span', { class: 'dx-status' });
 
@@ -229,6 +308,7 @@ export function buildDirectorSheet(ctx, close) {
         onclick: () => close(),
       })
     ),
+    tree.el,
     el('div', { class: 'dx-stage' }, scroller, el('div', { class: 'dx-column' }, composer))
   );
 
@@ -292,6 +372,9 @@ export function buildDirectorSheet(ctx, close) {
       scroller.scrollTop = scroller.scrollHeight;
       input.focus();
     },
-    destroy: () => unsubscribe(),
+    destroy: () => {
+      unsubscribe();
+      tree.destroy();
+    },
   };
 }

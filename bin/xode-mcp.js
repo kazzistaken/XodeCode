@@ -14,12 +14,95 @@
  * is one tool call, the actions run together, and the windows settle into a
  * single smooth re-tile. Requests go to the same token-authenticated control
  * bridge the `xode` CLI uses (XODE_CONTROL_URL / XODE_CONTROL_TOKEN).
+ *
+ * With XODE_MCP_MODE=team it instead serves one team agent (lead or worker)
+ * the team tools, using that agent's own token.
  */
 
 const http = require('node:http');
 
 const ENDPOINT = process.env.XODE_CONTROL_URL;
 const TOKEN = process.env.XODE_CONTROL_TOKEN;
+// "team" mode serves a team agent (lead or worker) instead of the Director.
+const TEAM_MODE = process.env.XODE_MCP_MODE === 'team';
+
+const NO_ARGS = { type: 'object', properties: {}, additionalProperties: false };
+
+/**
+ * Team tools. The app knows which window is calling (each agent has its own
+ * token) and refuses anything above the caller's rank, so these are listed to
+ * every member; the descriptions say which are lead-only.
+ */
+const TEAM_TOOLS = [
+  {
+    name: 'team',
+    description:
+      'See your team: your rank (lead or worker), the lead, every member with status and title, their latest reports, and the shared brief path.',
+    inputSchema: NO_ARGS,
+    annotations: { readOnlyHint: true },
+    method: 'team.info',
+  },
+  {
+    name: 'report',
+    description:
+      'Report up the chain. Workers report to their lead; the lead reports to the Director. Use "done" when your task is finished, "blocked" when you need something, "question" to ask, "progress" for a short update.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['done', 'blocked', 'question', 'progress'] },
+        text: { type: 'string', description: 'One or two sentences.' },
+      },
+      required: ['status', 'text'],
+      additionalProperties: false,
+    },
+    method: 'team.report',
+  },
+  {
+    name: 'spawn_worker',
+    description:
+      'Lead only. Start a new worker in your team (max 4 workers). Give it a concrete task and the files it owns.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        role: { type: 'string', description: 'Short role, e.g. "API routes".' },
+        prompt: { type: 'string', description: 'The worker\'s task.' },
+        model: { type: 'string', description: 'Optional: sonnet (default) or opus.' },
+        effort: { type: 'string', enum: ['low', 'medium', 'high'] },
+      },
+      required: ['role', 'prompt'],
+      additionalProperties: false,
+    },
+    method: 'team.spawn',
+  },
+  {
+    name: 'prompt_worker',
+    description: 'Lead only. Send a message or a new task to one of your own workers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        worker: { type: 'string', description: 'The worker\'s name (call sign) or id.' },
+        text: { type: 'string' },
+      },
+      required: ['worker', 'text'],
+      additionalProperties: false,
+    },
+    method: 'team.prompt',
+  },
+  {
+    name: 'brief',
+    description: 'Lead only. Replace or append to the team\'s shared brief.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string' },
+        append: { type: 'boolean', description: 'Append instead of replacing.' },
+      },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    method: 'team.brief',
+  },
+];
 
 const TOOLS = [
   {
@@ -128,6 +211,12 @@ async function callTool(name, args) {
   return { content: [{ type: 'text', text: `unknown tool "${name}"` }], isError: true };
 }
 
+async function callTeamTool(name, args) {
+  const tool = TEAM_TOOLS.find((entry) => entry.name === name);
+  if (!tool) return { content: [{ type: 'text', text: `unknown tool "${name}"` }], isError: true };
+  return { content: [{ type: 'text', text: text(await post(tool.method, args)) }] };
+}
+
 async function handle(message) {
   const { id, method, params } = message;
   const isRequest = id !== undefined && id !== null;
@@ -137,18 +226,25 @@ async function handle(message) {
       reply(id, {
         protocolVersion: params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: 'xode', version: '1.0.0' },
+        serverInfo: { name: TEAM_MODE ? 'team' : 'xode', version: '1.0.0' },
       });
       return;
     case 'ping':
       if (isRequest) reply(id, {});
       return;
     case 'tools/list':
-      reply(id, { tools: TOOLS });
+      reply(id, {
+        tools: TEAM_MODE ? TEAM_TOOLS.map(({ method: _method, ...tool }) => tool) : TOOLS,
+      });
       return;
     case 'tools/call':
       try {
-        reply(id, await callTool(params?.name, params?.arguments || {}));
+        reply(
+          id,
+          TEAM_MODE
+            ? await callTeamTool(params?.name, params?.arguments || {})
+            : await callTool(params?.name, params?.arguments || {})
+        );
       } catch (error) {
         reply(id, {
           content: [{ type: 'text', text: String((error && error.message) || error) }],

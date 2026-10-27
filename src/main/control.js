@@ -8,6 +8,11 @@
  * the app to open terminals, focus agents, switch pages, and so on.
  *
  * Requests are relayed to the renderer, which owns all app state.
+ *
+ * Besides the master token (Director and the `xode` CLI), every team agent
+ * gets its own token. Agent tokens may only call `team.*` methods, and the
+ * request reaches the renderer tagged with the calling window, which checks
+ * the caller's rank and team before acting.
  */
 
 const http = require('node:http');
@@ -18,6 +23,9 @@ const REQUEST_TIMEOUT = 45000;
 function createControlServer({ sendToRenderer, log = console.log }) {
   const token = crypto.randomBytes(24).toString('hex');
   const pending = new Map();
+  // token <-> nodeId for team agents.
+  const agentTokens = new Map();
+  const agentByNode = new Map();
   let sequence = 0;
   let url = null;
 
@@ -26,7 +34,10 @@ function createControlServer({ sendToRenderer, log = console.log }) {
       response.writeHead(404).end();
       return;
     }
-    if (request.headers.authorization !== `Bearer ${token}`) {
+    const auth = String(request.headers.authorization || '');
+    const given = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const caller = given === token ? null : agentTokens.get(given);
+    if (given !== token && !caller) {
       response.writeHead(401).end();
       return;
     }
@@ -48,7 +59,11 @@ function createControlServer({ sendToRenderer, log = console.log }) {
 
       const id = String(payload.id ?? ++sequence);
       try {
-        const result = await dispatch(id, payload.method, payload.params || {});
+        const method = String(payload.method || '');
+        if (caller && !method.startsWith('team.')) {
+          throw new Error('agents may only use team tools');
+        }
+        const result = await dispatch(id, method, payload.params || {}, caller);
         response
           .writeHead(200, { 'content-type': 'application/json' })
           .end(JSON.stringify({ ok: true, result }));
@@ -60,7 +75,7 @@ function createControlServer({ sendToRenderer, log = console.log }) {
     });
   });
 
-  function dispatch(id, method, params) {
+  function dispatch(id, method, params, caller = null) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -68,7 +83,7 @@ function createControlServer({ sendToRenderer, log = console.log }) {
       }, REQUEST_TIMEOUT);
 
       pending.set(id, { resolve, reject, timer });
-      sendToRenderer('control:request', { id, method, params });
+      sendToRenderer('control:request', { id, method, params, caller });
     });
   }
 
@@ -106,7 +121,19 @@ function createControlServer({ sendToRenderer, log = console.log }) {
     }
   }
 
+  /** A stable per-run token for one team agent's window. */
+  function agentToken(nodeId) {
+    const key = String(nodeId);
+    if (!agentByNode.has(key)) {
+      const fresh = crypto.randomBytes(24).toString('hex');
+      agentByNode.set(key, fresh);
+      agentTokens.set(fresh, key);
+    }
+    return agentByNode.get(key);
+  }
+
   return {
+    agentToken,
     start,
     stop,
     respond,

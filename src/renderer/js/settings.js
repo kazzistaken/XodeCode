@@ -293,7 +293,7 @@ export function initSettings(ctx) {
           }),
           settingRow({
             title: 'Claude GUI mode',
-            desc: 'Render Claude agents as a chat window with model and effort switchers instead of a terminal.',
+            desc: 'Render Claude agents in the Claude Code look — tool calls, diffs, todos, slash commands — as crisp, scalable HTML instead of a raw terminal.',
             value: store.state.settings.guiTerminals,
             onChange: (value) => {
               store.setSetting('guiTerminals', value);
