@@ -168,7 +168,7 @@ The GUI-chat mode needs this even more than terminals do: it runs `claude -p` (p
 - Layout, pages, notes and themes persist in local storage.
 - **Claude GUI mode** (off by default): turn it on in **Settings → Canvas** and Claude agents look exactly like the Claude Code terminal UI — the welcome box, `>` prompts, `⏺` bullets, tool calls such as `Bash(npm test)` with their `⎿` results (long output folds behind *+N lines*), red/green diffs for edits, todo checklists, the `✻` spinner, the bordered input box and slash commands (`/model`, `/effort`, `/clear`, `/resume`, `/cost`, `/help`) — but drawn as crisp HTML that scales with the window. It talks to `claude -p --output-format stream-json` and resumes the same session for every message. **Chats are saved** (`%APPDATA%\xodecode\chats`) and survive restarts.
 - Terminals render supersampled (1.5×) so text stays crisp.
-- **Backgrounds**: pick **Northern lights** (an original night-sky scene), **Sunset lake** (pixel art, drawn crisp) or your own picture in **Settings → Canvas**, with a true-to-screen preview. Pictures are never stretched. The background lives on the canvas itself: it **zooms and pans with your windows**, sized to the whole canvas, and fades softly at its edges when you zoom far out.
+- **Backgrounds**: pick **Northern lights** (an original night-sky scene), **Sunset lake** (pixel art, drawn crisp) or your own picture in **Settings → Canvas**, with a true-to-screen preview. Pictures are never stretched. The picture always **fills the screen** behind the canvas and stays the same size however far you zoom or pan.
 
 ## Attention
 

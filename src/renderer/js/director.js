@@ -20,6 +20,8 @@ let lastLine = '';
 let deaths = 0;
 let saveTimer = null;
 let contextProvider = null;
+let freshContext = true;
+let sendChain = Promise.resolve();
 /** @type {Array<{role: string, text: string, detail?: string, at: number}>} */
 let transcript = [];
 const listeners = new Set();
@@ -125,6 +127,8 @@ export function startDirector(force = false) {
       .catch(() => {});
   }
   started = true;
+  // A new process has seen none of the shared briefs yet.
+  freshContext = true;
   setStatus('starting');
   window.api.director.start(options()).catch((error) => {
     push({ role: 'error', text: `Director failed to start: ${error.message}` });
@@ -138,7 +142,11 @@ export function restartDirector() {
   startDirector(true);
 }
 
-/** A function returning the canvas snapshot that is sent with each prompt. */
+/**
+ * A function returning (or resolving to) the context sent with each prompt:
+ * the canvas snapshot plus shared briefs. It is told when the Director process
+ * is new, so it can resend everything the new process has not seen.
+ */
 export function setContextProvider(fn) {
   contextProvider = fn;
 }
@@ -149,18 +157,23 @@ export function sendToDirector(text, { from } = {}) {
   if (!clean) return false;
   if (status === 'dead') restartDirector();
 
-  let context = '';
-  try {
-    context = contextProvider ? contextProvider() : '';
-  } catch (error) {
-    console.warn('[director] snapshot failed', error);
-  }
-
   pending += 1;
   push(from ? { role: 'user', text: clean, from } : { role: 'user', text: clean });
   setStatus('working');
-  window.api.director
-    .send(context ? `${context}\n\n${clean}` : clean)
+  // Chained, so messages reach the Director in order even though building the
+  // context reads files.
+  sendChain = sendChain
+    .then(async () => {
+      let context = '';
+      try {
+        const fresh = freshContext;
+        freshContext = false;
+        context = contextProvider ? await contextProvider({ fresh }) : '';
+      } catch (error) {
+        console.warn('[director] context failed', error);
+      }
+      return window.api.director.send(context ? `${context}\n\n${clean}` : clean);
+    })
     .then((result) => {
       if (result?.error) {
         pending = Math.max(0, pending - 1);

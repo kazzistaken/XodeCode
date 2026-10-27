@@ -162,8 +162,8 @@ svg {
   cursor: grab;
 }
 
-/* With a picture, the dot grid steps aside; the picture itself is drawn by
-   .world-bg in world space so it zooms and pans with everything else. */
+/* With a picture, the dot grid steps aside and the picture fills the screen
+   behind the canvas. It stays put while you pan and zoom. */
 #viewport.has-background {
   background-image: none;
   background-color: var(--bg-base, #08090d);
@@ -171,26 +171,13 @@ svg {
 
 .world-bg {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   display: none;
-  transform-origin: 0 0;
   pointer-events: none;
   background-image: var(--canvas-image);
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
-  /* Soft edges, so zooming out reveals a fade rather than a hard border. */
-  -webkit-mask-image:
-    linear-gradient(to right, transparent, #000 5%, #000 95%, transparent),
-    linear-gradient(to bottom, transparent, #000 5%, #000 95%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-composite: intersect;
-  transition:
-    left 420ms cubic-bezier(0.22, 1, 0.36, 1),
-    top 420ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 420ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 #viewport.has-background .world-bg {

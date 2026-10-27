@@ -17,7 +17,7 @@ import { initHierarchy } from './hierarchy.js';
 import { buildHierarchySheet } from './hierarchyview.js';
 import { initSettings } from './settings.js';
 import { initPages } from './pages.js';
-import { initControl, normalizeModel, normalizeEffort, canvasSummary } from './control.js';
+import { initControl, normalizeModel, normalizeEffort, canvasSummary, directorContext } from './control.js';
 import { director } from './director.js';
 import { openOverlay, closeOverlay, isOverlayOpen } from './overlay.js';
 
@@ -192,7 +192,7 @@ initHierarchy(canvas);
 
 // Every prompt carries a snapshot of the canvas, so the Director can act in
 // one turn without first asking what is open.
-director.setContextProvider(() => canvasSummary(ctx));
+director.setContextProvider((options) => directorContext(ctx, options));
 
 window.api.context
   .read()

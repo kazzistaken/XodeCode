@@ -152,6 +152,18 @@ async function runTeamTest(mainWindow, control) {
     await run(`(() => [...document.querySelectorAll('.board-col')].map((c) => c.querySelectorAll('.board-card').length))()`)
   );
   await shot('board');
+  // The Director sees the team brief and the fleet context.
+  await run(`(() => { window.__xo.store.state.sharedContext = '# Fleet context\\nFleet codename: PELICAN.'; return true; })()`);
+  await run(
+    `window.__xo.director.send('Without using tools: what does the TestTeam brief say, and what is the fleet codename? One sentence.'); true`
+  );
+  let answer = '';
+  for (let i = 0; i < 15 && !answer; i++) {
+    await wait(2000);
+    const last = (await state()).director.slice(-1)[0];
+    if (last && last.role === 'assistant' && /pelican|tool test/i.test(last.text)) answer = last.text;
+  }
+  log('CONTEXT_ANSWER', answer || (await state()).director.slice(-2));
   log('DONE', { seconds: Math.round((Date.now() - started) / 1000), timedOut: deadline() });
   app.quit();
 }

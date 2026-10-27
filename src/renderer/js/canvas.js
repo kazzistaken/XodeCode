@@ -50,9 +50,8 @@ export class Canvas {
     this._historyLock = false;
     this.marquee = null;
     this._spawnBurst = { at: 0, count: 0 };
-    this._homeRects = new Map();
-    // The background picture lives in world space (behind the pages), so it
-    // zooms and pans with the canvas.
+    // The background picture sits behind the canvas and always fills the
+    // screen, whatever the zoom.
     this.bgEl = el('div', { class: 'world-bg', 'aria-hidden': 'true' });
     this.viewportEl.insertBefore(this.bgEl, this.worldEl);
     this._bind();
@@ -157,7 +156,6 @@ export class Canvas {
     }
     // Keep the active tab's windows tiled for the current screen size.
     this.relayout({ animate: this.views.size > 0 });
-    this.updateWorldBackground();
   }
 
   mountAll() {
@@ -468,6 +466,7 @@ export class Canvas {
       this.thumbs.set(node.id, { ...(this.thumbs.get(node.id) || {}), text, at: Date.now() });
     }
     store.save();
+    this.drawJointLines();
     store.emit('dock');
     store.emit('selection', this.selectedId);
 
@@ -512,6 +511,7 @@ export class Canvas {
     const view = this.views.get(id);
     // Settle the layout first so the window grows straight into its slot.
     this.relayout({ animate: true, page, fresh: new Set([id]) });
+    this.drawJointLines();
     if (view) {
       view.el.classList.remove('is-parked');
       view.el.style.zIndex = String(node.z);
@@ -552,7 +552,6 @@ export class Canvas {
     const page = options.page || store.page;
     const plan = this.planLayout(page);
     if (!plan.length) {
-      this.updateWorldBackground(page);
       return [];
     }
     const fresh = options.fresh || null;
@@ -572,38 +571,7 @@ export class Canvas {
       }
     }
     store.save();
-    this._homeRects.set(page.id, this.layoutFrame());
-    this.updateWorldBackground(page);
     return plan.map((item) => item.rect);
-  }
-
-  /**
-   * Size the background to the whole canvas: the area the windows tile into
-   * plus everything on the page, with room to spare. At rest it fills the
-   * screen; zoom out and it shrinks with the windows, so the full canvas sits
-   * on the picture, its edges fading into the surrounding colour.
-   */
-  updateWorldBackground(page = store.page) {
-    if (page.id !== store.page.id) return;
-    const home = this._homeRects.get(page.id) || this.layoutFrame();
-    let minX = home.x;
-    let minY = home.y;
-    let maxX = home.x + home.w;
-    let maxY = home.y + home.h;
-    for (const node of page.nodes) {
-      if (node.parked) continue;
-      minX = Math.min(minX, node.x);
-      minY = Math.min(minY, node.y);
-      maxX = Math.max(maxX, node.x + node.w);
-      maxY = Math.max(maxY, node.y + node.h);
-    }
-    const padX = Math.max(120, (maxX - minX) * 0.08);
-    const padY = Math.max(120, (maxY - minY) * 0.08);
-    const box = this.bgEl.style;
-    box.left = `${minX - padX}px`;
-    box.top = `${minY - padY}px`;
-    box.width = `${maxX - minX + padX * 2}px`;
-    box.height = `${maxY - minY + padY * 2}px`;
   }
 
   /** Switch the page's arrangement ("grid", "columns", "rows" or "focus"). */
@@ -986,7 +954,6 @@ export class Canvas {
   applyViewport() {
     const vp = store.page.viewport;
     this.worldEl.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.scale})`;
-    this.bgEl.style.transform = this.worldEl.style.transform;
     // Cheap bitmap scaling while moving; a sharp repaint once it settles.
     this.viewportEl.classList.add('is-moving');
     clearTimeout(this._settleTimer);
@@ -1403,7 +1370,6 @@ export class Canvas {
         this.relayout({ animate: true, page });
         return;
       }
-      this.updateWorldBackground(page);
       if (store.state.settings.snapToGrid) {
         for (const start of starts) {
           start.node.x = Math.round(start.node.x / GRID) * GRID;

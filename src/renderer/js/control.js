@@ -1094,6 +1094,45 @@ export function canvasSummary(ctx) {
   return lines.join('\n');
 }
 
+/* --------------------------- Director context --------------------------- */
+
+const MAX_CONTEXT_CHARS = 6000;
+// What the running Director process has already been shown, by source.
+const contextSeen = new Map();
+
+function contextBlock(key, label, text, fresh) {
+  const body = String(text || '').trim();
+  if (!body) return `${label}: (empty)`;
+  if (!fresh && contextSeen.get(key) === body) return `${label}: unchanged since you last saw it`;
+  contextSeen.set(key, body);
+  const clipped = body.length > MAX_CONTEXT_CHARS ? `${body.slice(0, MAX_CONTEXT_CHARS)}\n… (truncated)` : body;
+  return `${label}:\n<<<\n${clipped}\n>>>`;
+}
+
+/**
+ * Everything the Director is told before a message: the canvas snapshot, the
+ * fleet context every standalone session reads, and each team's brief. A file
+ * is sent in full only when it is new or changed since the Director last saw
+ * it (`fresh` = a newly started Director that has seen nothing yet).
+ */
+export async function directorContext(ctx, { fresh = false } = {}) {
+  if (fresh) contextSeen.clear();
+  const parts = [canvasSummary(ctx)];
+  parts.push(
+    `[context] ${contextBlock('fleet', 'fleet context (shared by standalone sessions)', store.state.sharedContext, fresh)}`
+  );
+  for (const { joint } of teamTree()) {
+    let text = '';
+    try {
+      text = await window.api.joint.read(joint.id);
+    } catch {
+      text = '';
+    }
+    parts.push(`[context] ${contextBlock(`joint:${joint.id}`, `team ${joint.name} brief`, text, fresh)}`);
+  }
+  return parts.join('\n');
+}
+
 /** Full structured canvas state for the `canvas` tool. */
 function canvasDetail(ctx) {
   const page = store.page;
