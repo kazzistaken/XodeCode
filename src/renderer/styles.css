@@ -3830,7 +3830,7 @@ kbd.key {
 }
 
 /* ============================================================
-   Dock — closed apps, bottom-left
+   Dock — closed apps, bottom-left, level with the prompt bar
    ============================================================ */
 
 .dock {
@@ -3839,317 +3839,315 @@ kbd.key {
   bottom: 16px;
   z-index: 47;
   display: flex;
-  flex-direction: column-reverse;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 6px;
-  transition: opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  align-items: center;
+  gap: 4px;
+  height: 48px;
+  padding: 0 6px;
+  border-radius: var(--r-panel);
+  background: var(--glass-strong);
+  border: 1px solid var(--border-2);
+  box-shadow: var(--edge), var(--shadow-lg);
+  backdrop-filter: var(--glass-blur);
+  transition:
+    opacity 200ms ease,
+    transform 260ms var(--ease-out);
 }
 
 .dock.is-empty {
   opacity: 0;
-  transform: translateX(-14px) scale(0.96);
+  transform: translateY(8px) scale(0.96);
   pointer-events: none;
 }
 
-/* One stack per kind of app. Tiles sit on top of each other like cards. */
+html.ui-flat .dock {
+  background: var(--ink-850);
+  backdrop-filter: none;
+}
+
+/* One icon per kind of app. */
 .dock-stack {
   position: relative;
-  width: 44px;
-  height: 44px;
-}
-
-/* A hovered stack rises above its neighbours while it fans out. */
-.dock-stack:hover {
-  z-index: 5;
-}
-
-/* Keep the hover alive across the whole fanned-out column. */
-.dock-stack.is-stacked:hover::after {
-  content: "";
-  position: absolute;
-  left: -6px;
-  bottom: -6px;
-  width: 56px;
-  height: calc(var(--count) * var(--step) + 8px);
 }
 
 .dock-tile {
-  --i: 0;
-  overflow: visible;
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: calc(20 - var(--i));
+  position: relative;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
+  width: 36px;
+  height: 36px;
   padding: 0;
-  background: transparent;
-  border: 0;
-  color: var(--text);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.32);
-  transform: translate(calc(var(--i) * -3px), calc(var(--i) * -3px)) scale(calc(1 - var(--i) * 0.05));
-  opacity: calc(1 - var(--i) * 0.28);
+  border-radius: var(--radius);
+  color: var(--muted);
   transition:
-    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 220ms ease,
-    background 160ms ease,
-    box-shadow 160ms ease;
+    background 120ms ease,
+    color 120ms ease,
+    transform 160ms var(--ease-out),
+    opacity 160ms ease;
 }
 
-/* Hover a stack: its tiles slide out upward (clear of the prompt bar), one
-   after another, in one straight column. */
-.dock-stack.is-stacked:hover .dock-tile {
-  transform: translateY(calc(var(--i) * var(--step) * -1));
-  opacity: 1;
-  transition-delay: calc(var(--i) * 18ms);
+.dock-tile:hover,
+.dock-stack:focus-within .dock-tile {
+  background: var(--hover);
+  color: var(--text);
 }
 
-.dock-stack .dock-tile:hover {
-  z-index: 30;
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.45);
+.dock-tile:active {
+  transform: scale(0.94);
 }
 
-/* A hovered tile grows a touch in place: no drift, stays in its column. */
-.dock-stack.is-stacked:hover .dock-tile:hover {
-  transform: translateY(calc(var(--i) * var(--step) * -1)) scale(1.03);
+/* Waiting for its window to land (see Canvas.parkNodes), then a small bump. */
+.dock-tile.is-waiting {
+  opacity: 0;
+  transform: scale(0.6);
 }
 
-.dock-stack:not(.is-stacked) .dock-tile:hover {
-  transform: scale(1.03);
+.dock-tile.is-bump {
+  animation: dock-bump 420ms cubic-bezier(0.22, 1.4, 0.36, 1);
 }
 
-.dock-tile.is-new {
-  animation: dock-pop 340ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
-}
-
-.dock-tile.is-opening {
-  transform: scale(0.88) !important;
+@keyframes dock-bump {
+  0% {
+    transform: scale(0.7);
+  }
+  55% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .dock-logo {
   display: grid;
   place-items: center;
+  width: 20px;
+  height: 20px;
   pointer-events: none;
 }
 
-/* App logos: the colour is a tint over prompt-bar glass. */
-.dock-logo.is-art {
-  border-radius: 11px;
-  background: var(--glass-strong);
-  box-shadow: var(--edge), 0 0 0 1px var(--border-2);
-}
-
 .dock-logo svg {
-  width: 44px;
-  height: 44px;
-  display: block;
+  width: 20px;
+  height: 20px;
 }
 
-/* A bare glyph (Claude agents): no plate, no tile shadow, and only the top
-   tile shows until the stack fans out, so the glyphs don't pile up. */
-.dock-logo.is-plain svg {
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
-}
-
-.dock-tile:has(> .dock-logo.is-plain) {
-  box-shadow: none;
-}
-
-.dock-stack:not(:hover) .dock-tile:has(> .dock-logo.is-plain) {
-  opacity: max(0, calc(1 - var(--i)));
-}
-
-.dock-logo.is-site {
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
-  background: linear-gradient(#fff, #e9ecf2);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+.dock-logo.is-agent svg {
+  width: 22px;
+  height: 22px;
 }
 
 .dock-favicon {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-}
-
-/* × to close for good */
-.dock-x {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  display: grid;
-  place-items: center;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  background: var(--ink-600);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #fff;
-  opacity: 0;
-  transform: scale(0.6);
-  transition: opacity 140ms ease, transform 160ms ease, background 120ms ease;
-}
-
-.dock-x svg {
-  width: 10px;
-  height: 10px;
-  stroke-width: 2.4;
-}
-
-.dock-tile:hover .dock-x {
-  opacity: 1;
-  transform: none;
-}
-
-.dock-x:hover {
-  background: var(--red);
+  border-radius: 4px;
 }
 
 .dock-count {
   position: absolute;
-  right: -5px;
-  bottom: -5px;
-  z-index: 25;
-  min-width: 17px;
-  height: 17px;
+  top: -3px;
+  right: -3px;
+  box-shadow: 0 0 0 2px var(--ink-850);
+  min-width: 15px;
+  height: 15px;
   padding: 0 4px;
-  border-radius: var(--radius);
+  border-radius: var(--r-pill);
   background: var(--white);
   color: var(--on-white);
-  font-size: var(--fs-xs);
-  font-weight: 700;
-  line-height: 17px;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 15px;
   text-align: center;
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
-  transition: opacity 140ms ease;
 }
 
-.dock-stack:hover .dock-count {
-  opacity: 0;
-}
-
+/* A docked window that is working (white, pulsing) or needs you (amber). */
 .dock-busy {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 7px;
-  height: 7px;
+  left: 50%;
+  bottom: 1px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--white);
+  animation: pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.dock-busy.is-needs {
+  background: var(--amber);
+  animation: none;
+}
+
+/* The list of a kind's windows, opening upward from its icon. */
+.dock-tray {
+  position: absolute;
+  left: -6px;
+  bottom: calc(100% + 14px);
+  width: 268px;
+  padding: 6px;
+  border-radius: var(--r-panel);
+  background: var(--glass-strong);
+  border: 1px solid var(--border-2);
+  box-shadow: var(--edge), var(--shadow-lg);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  transform: translateY(6px) scale(0.98);
+  transform-origin: 20px 100%;
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    transform 180ms var(--ease-out);
+}
+
+/* An invisible bridge so the pointer can travel from the icon to the list. */
+.dock-tray::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 16px;
+}
+
+.dock-stack:hover .dock-tray,
+.dock-stack:focus-within .dock-tray {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+html.ui-flat .dock-tray {
+  background: var(--ink-850);
+  backdrop-filter: none;
+}
+
+.dock-tray-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 6px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.dock-tray-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.dock-tray-list {
+  max-height: min(380px, calc(100vh - 180px));
+  overflow-y: auto;
+}
+
+.dock-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 5px 6px 5px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.dock-row:hover,
+.dock-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.dock-row .dock-logo {
+  flex: none;
+  color: var(--muted);
+}
+
+.dock-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dock-row-name {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-row-detail {
+  font-size: var(--fs-xs);
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-row-status {
+  flex: none;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--white);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
-.dock-busy.is-needs {
+.dock-row-status.is-needs {
   background: var(--amber);
+  animation: none;
 }
 
-@keyframes dock-pop {
-  from {
-    opacity: 0;
-    transform: translateX(-10px) scale(0.6);
-  }
-}
-
-/* Hover preview: the window as it was, plus a ghost of where it sat. */
-.dock-preview {
-  position: fixed;
-  z-index: 60;
-  width: 360px;
-  padding: 10px;
-  border-radius: var(--radius);
-  background: var(--ink-800);
-  border: 1px solid var(--border-2);
-  box-shadow: var(--shadow-lg);
+.dock-row-x {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-control);
+  color: var(--faint);
   opacity: 0;
-  transform: translateX(-8px) scale(0.98);
-  pointer-events: none;
-  transition: opacity 150ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 100ms ease,
+    background 100ms ease,
+    color 100ms ease;
 }
 
-.dock-preview.is-visible {
-  opacity: 1;
-  transform: none;
-}
-
-.dock-preview-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.dock-preview-logo .dock-logo svg,
-.dock-preview-logo .dock-logo.is-site {
-  width: 20px;
-  height: 20px;
-}
-
-.dock-preview-logo .dock-favicon {
+.dock-row-x svg {
   width: 13px;
   height: 13px;
 }
 
-.dock-preview-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-sm);
-  font-weight: 600;
+.dock-row:hover .dock-row-x,
+.dock-row:focus-within .dock-row-x {
+  opacity: 1;
 }
 
-.dock-preview-shot {
-  display: block;
-  width: 100%;
-  max-height: 260px;
-  object-fit: contain;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--ink-950);
+.dock-row-x:hover {
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+  color: var(--red);
 }
 
-.dock-preview-text {
-  max-height: 240px;
-  margin: 0;
-  padding: 10px;
-  overflow: hidden;
-  border-radius: var(--radius);
-  background: var(--ink-950);
-  border: 1px solid var(--border);
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  line-height: 1.45;
-  color: var(--muted);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.dock-preview-hint {
-  margin-top: 7px;
-  font-size: var(--fs-xs);
-  color: var(--muted);
-}
-
-/* Hovering a docked tile shows the window as it was, on the canvas. */
+/* Hovering a row shows the window as it was, on the canvas. */
 .dock-ghost {
   position: fixed;
   z-index: 46;
   overflow: hidden;
-  border-radius: var(--radius);
-  border: 1px solid var(--accent-line);
-  background-color: var(--surface, var(--ink-850));
+  border-radius: var(--r-panel);
+  border: 1px solid var(--border-2);
+  background-color: var(--ink-850);
   background-size: 100% 100%;
   background-repeat: no-repeat;
   box-shadow: var(--shadow-lg);
   opacity: 0;
   transform: scale(0.985);
   pointer-events: none;
-  transition: opacity 160ms ease, transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 160ms ease,
+    transform 200ms var(--ease-out);
 }
 
 .dock-ghost.is-visible {
@@ -4159,35 +4157,12 @@ kbd.key {
 
 .dock-ghost-text {
   margin: 0;
-  padding: 44px 16px 16px;
+  padding: 16px;
   height: 100%;
   overflow: hidden;
-  color: var(--text-dim, var(--ink-300));
+  color: var(--faint);
   font: 12px/1.5 var(--mono, ui-monospace, monospace);
   white-space: pre-wrap;
-}
-
-.dock-ghost-label {
-  position: absolute;
-  left: 10px;
-  top: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100% - 20px);
-  padding: 5px 10px 5px 6px;
-  border-radius: var(--radius);
-  background: rgba(20, 20, 20, 0.94);
-  color: var(--text, var(--ink-50));
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.dock-ghost-label > i {
-  font-style: normal;
-  color: var(--text-dim, var(--ink-300));
-  font-size: 11px;
 }
 
 /* Windows far off screen are not drawn (see Canvas._cull); they keep running. */
@@ -4201,7 +4176,9 @@ kbd.key {
   pointer-events: none;
 }
 
+/* A window flying into the dock passes over the others. */
 .node.is-leaving {
+  z-index: 100000 !important;
   pointer-events: none;
 }
 

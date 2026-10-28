@@ -3,17 +3,30 @@ import { icon } from './icons.js';
 import { store } from './store.js';
 
 /**
- * The dock — closed apps, bottom-left.
+ * The dock — closed apps, bottom-left, level with the prompt bar.
  *
  * Closing a window (or clearing the canvas) sends it here instead of killing
- * it. Windows of the same kind stack into one rounded logo tile; hovering a
- * stack fans its tiles upward, hovering a tile shows the window as it was,
- * right on the canvas where it sat (or centred, if that spot is off screen),
- * clicking brings it back, and the × on a tile closes it for good.
+ * it: it shrinks and flies into its kind's icon (see Canvas.parkNodes). One
+ * icon per kind of app, with a count when several are waiting. Hovering an
+ * icon opens a list of its windows; hovering a row shows the window as it
+ * was, right on the canvas where it sat, clicking brings it back, and the ×
+ * on a row closes it for good. Clicking the icon itself restores the newest.
  */
 
 const GROUP_ORDER = ['agent', 'terminal', 'browser', 'music', 'board', 'note'];
-const STEP = 48; // px between fanned-out tiles
+const GROUP_LABEL = {
+  agent: 'Claude agents',
+  terminal: 'Terminals',
+  browser: 'Browsers',
+  music: 'Music',
+  board: 'Task boards',
+  note: 'Notes',
+};
+// The same icons the windows show in their title bars.
+const GROUP_ICON = { agent: 'claude', terminal: 'shell', browser: 'globe', music: 'sound', board: 'summarizer', note: 'note' };
+
+/** Windows still flying into the dock: their icon waits until they land. */
+const arriving = new Set();
 
 function hostOf(url) {
   try {
@@ -28,99 +41,71 @@ function groupOf(node) {
   return GROUP_ORDER.includes(node.kind) ? node.kind : 'note';
 }
 
-/* App-icon artwork: a gradient squircle with a crisp glyph, one per kind. */
-const ART = {
-  // Claude agents: just the orange asterisk, no plate.
-  agent: {
-    plain: true,
-    glyph:
-      '<image href="../../assets/claude.png" x="7" y="7" width="30" height="30" />',
-  },
-  terminal: {
-    from: '#3a3f4a',
-    to: '#14161b',
-    glyph:
-      '<g fill="none" stroke="#7ee0a1" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 16.5 19.5 22l-7 5.5"/><path d="M23.5 29h8.5" stroke="#e8eaee"/></g>',
-  },
-  browser: {
-    from: '#4aa3ff',
-    to: '#2250d8',
-    glyph:
-      '<g fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="22" cy="22" r="10.5"/><path d="M11.5 22h21M22 11.5c3.4 3.2 5 6.7 5 10.5s-1.6 7.3-5 10.5c-3.4-3.2-5-6.7-5-10.5s1.6-7.3 5-10.5z"/></g>',
-  },
-  music: {
-    from: '#ff6b9a',
-    to: '#c71f5f',
-    glyph:
-      '<g fill="#fff"><path d="M18 12.5 31 10v14.2a4 4 0 1 1-2.6-3.7V14.6l-8 1.5v11.6a4 4 0 1 1-2.6-3.7z"/></g>',
-  },
-  board: {
-    from: '#8b7bff',
-    to: '#4a37d6',
-    glyph:
-      '<g fill="#fff"><rect x="11.5" y="11.5" width="9.2" height="9.2" rx="2.4"/><rect x="23.3" y="11.5" width="9.2" height="9.2" rx="2.4" opacity=".7"/><rect x="11.5" y="23.3" width="9.2" height="9.2" rx="2.4" opacity=".7"/><rect x="23.3" y="23.3" width="9.2" height="9.2" rx="2.4"/></g>',
-  },
-  note: {
-    from: '#ffd45e',
-    to: '#e69a14',
-    glyph:
-      '<g stroke="#fff" stroke-width="2.4" stroke-linecap="round" fill="none"><path d="M13 15.5h18M13 22h18M13 28.5h11"/></g>',
-  },
-};
-
-let artId = 0;
-function artSvg(group) {
-  const art = ART[group] || ART.note;
-  if (art.plain) return `<svg viewBox="0 0 44 44" aria-hidden="true">${art.glyph}</svg>`;
-  const id = `dk${artId++}`;
-  return (
-    `<svg viewBox="0 0 44 44" aria-hidden="true"><defs>` +
-    `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${art.from}"/><stop offset="1" stop-color="${art.to}"/></linearGradient>` +
-    `<linearGradient id="${id}s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>` +
-    `<rect width="44" height="44" rx="11" fill="url(#${id})" fill-opacity=".55"/>` +
-    `<rect width="44" height="44" rx="11" fill="url(#${id}s)"/>` +
-    `<rect x=".5" y=".5" width="43" height="43" rx="10.5" fill="none" stroke="#fff" stroke-opacity=".16"/>` +
-    art.glyph +
-    `</svg>`
-  );
-}
-
+/** A window's logo: its kind's icon, or a browser's site icon once it loads. */
 function logoFor(node) {
   const group = groupOf(node);
-  const holder = el('span', {
-    class: `dock-logo ${ART[group]?.plain ? 'is-plain' : 'is-art'}`,
-    html: artSvg(group),
-  });
-  if (group === 'browser') {
-    const host = hostOf(node.payload?.url);
-    // The compass stays until a real site icon arrives (sites without one get a
-    // tiny generic icon from the service, which we ignore).
-    if (host) {
-      const img = new Image();
-      img.className = 'dock-favicon';
-      img.alt = '';
-      img.onload = () => {
-        if (img.naturalWidth <= 16) return;
-        holder.classList.remove('is-art');
-        holder.classList.add('is-site');
-        holder.replaceChildren(img);
-      };
-      img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
-    }
+  const holder = el('span', { class: `dock-logo is-${group}`, html: icon(GROUP_ICON[group]) });
+  const host = group === 'browser' ? hostOf(node.payload?.url) : '';
+  if (host) {
+    const img = new Image();
+    img.className = 'dock-favicon';
+    img.alt = '';
+    img.onload = () => {
+      // Sites without an icon get a tiny generic one from the service; skip it.
+      if (img.naturalWidth <= 16) return;
+      holder.classList.add('is-site');
+      holder.replaceChildren(img);
+    };
+    img.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
   }
   return holder;
 }
 
-function labelFor(node) {
-  if (node.kind === 'browser') return hostOf(node.payload?.url) || node.title || 'Browser';
-  return [node.callSign, node.title].filter(Boolean).join(' — ');
+function nameFor(node) {
+  if (node.kind === 'browser') return hostOf(node.payload?.url) || 'Browser';
+  return node.callSign || GROUP_LABEL[groupOf(node)];
+}
+
+function detailFor(node) {
+  if (node.kind === 'browser') return node.title || node.payload?.url || '';
+  if (node.kind === 'note') return (node.payload?.text || '').split('\n')[0];
+  return node.title || '';
+}
+
+function statusOf(node) {
+  return node.status === 'working' || node.status === 'needs' ? node.status : '';
+}
+
+/** Mark windows that are about to fly in, so their icon waits for them. */
+export function dockArriving(ids) {
+  for (const id of ids) arriving.add(id);
+}
+
+/** A window finished flying in: show its icon, with a small bump. */
+export function dockLanded(id) {
+  arriving.delete(id);
+  const tile = document.querySelector(`#dock .dock-tile[data-ids~="${id}"]`);
+  if (!tile) return;
+  const ids = tile.dataset.ids.split(' ');
+  if (ids.some((other) => arriving.has(other))) return;
+  tile.classList.remove('is-waiting', 'is-bump');
+  void tile.offsetWidth;
+  tile.classList.add('is-bump');
+}
+
+/** Where a window should fly to: the centre and size of its kind's icon. */
+export function dockTargetFor(node) {
+  const tile = document.querySelector(`#dock .dock-stack[data-group="${groupOf(node)}"] .dock-tile`);
+  const rect = (tile || $('#dock'))?.getBoundingClientRect();
+  if (!rect || !rect.width) return { x: 40, y: window.innerHeight - 40, size: 36 };
+  // A waiting icon is drawn scaled down; aim for its full size.
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, size: tile?.offsetWidth || 36 };
 }
 
 export function initDock(ctx) {
   const dock = $('#dock');
   const ghost = el('div', { class: 'dock-ghost', 'aria-hidden': 'true' });
   document.body.append(ghost);
-  let seen = new Set();
   let hideTimer = null;
   let showTimer = null;
   let shownId = null;
@@ -151,27 +136,16 @@ export function initDock(ctx) {
     ghost.style.width = `${w}px`;
     ghost.style.height = `${h}px`;
     ghost.style.backgroundImage = shot?.src ? `url("${shot.src}")` : 'none';
-    const parts = [
-      shot?.src
-        ? null
-        : el('pre', {
-            class: 'dock-ghost-text',
-            text:
-              shot?.text ||
-              (node.kind === 'note' ? node.payload?.text : '') ||
-              node.payload?.url ||
-              node.title ||
-              'Nothing to show yet.',
-          }),
-      el(
-        'div',
-        { class: 'dock-ghost-label' },
-        el('span', { class: `dock-preview-logo is-${groupOf(node)}` }, logoFor(node)),
-        el('span', { text: truncate(labelFor(node), 60) }),
-        el('i', { text: 'click to open · × closes for good' })
-      ),
-    ];
-    ghost.replaceChildren(...parts.filter(Boolean));
+    ghost.replaceChildren(
+      ...[
+        shot?.src
+          ? null
+          : el('pre', {
+              class: 'dock-ghost-text',
+              text: shot?.text || detailFor(node) || node.payload?.url || 'Nothing to show yet.',
+            }),
+      ].filter(Boolean)
+    );
     ghost.classList.add('is-visible');
   }
 
@@ -184,51 +158,104 @@ export function initDock(ctx) {
     }, 60);
   }
 
-  /** Wait for the fan-out to settle so only the tile under the pointer previews. */
-  function queuePreview(node, button) {
+  function queuePreview(node, row) {
     clearTimeout(showTimer);
     showTimer = setTimeout(() => {
-      if (button.matches(':hover') && shownId !== node.id) showPreview(node);
-    }, 110);
+      if (row.matches(':hover') && shownId !== node.id) showPreview(node);
+    }, 120);
   }
 
-  /* ------------------------------- tiles ------------------------------- */
+  /* ------------------------------ restore ------------------------------ */
 
-  function tile(node, index, count) {
-    const close = el('button', {
-      class: 'dock-x',
-      type: 'button',
-      title: 'Close for good',
-      'aria-label': `Close ${labelFor(node)} for good`,
-      html: icon('x'),
-      onclick: (event) => {
-        event.stopPropagation();
-        hidePreview();
-        ctx.canvas.removeNode(node.id);
-      },
+  function restore(node, from) {
+    hidePreview();
+    const rect = from.getBoundingClientRect();
+    ctx.canvas.restoreNode(node.id, {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      size: Math.min(rect.width, rect.height),
     });
-    const button = el(
-      'button',
+  }
+
+  /* ------------------------------- rows -------------------------------- */
+
+  function row(node, tileEl) {
+    const status = statusOf(node);
+    const detail = detailFor(node);
+    const rowEl = el(
+      'div',
       {
-        class: `dock-tile is-${groupOf(node)}${seen.has(node.id) ? '' : ' is-new'}`,
-        type: 'button',
-        'aria-label': `Open ${labelFor(node)}`,
-        style: { '--i': String(count - 1 - index) },
-        onclick: () => {
-          hidePreview();
-          const rect = button.getBoundingClientRect();
-          button.classList.add('is-opening');
-          ctx.canvas.restoreNode(node.id, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+        class: 'dock-row',
+        role: 'button',
+        tabindex: '0',
+        title: `Open ${nameFor(node)}`,
+        onclick: () => restore(node, tileEl),
+        onkeydown: (event) => {
+          if (event.key === 'Enter') restore(node, tileEl);
         },
-        onpointerenter: () => queuePreview(node, button),
+        onpointerenter: () => queuePreview(node, rowEl),
         onpointerleave: hidePreview,
       },
       logoFor(node),
-      close
+      el(
+        'span',
+        { class: 'dock-row-text' },
+        el('span', { class: 'dock-row-name', text: nameFor(node) }),
+        detail ? el('span', { class: 'dock-row-detail', text: truncate(detail, 80) }) : null
+      ),
+      status ? el('span', { class: `dock-row-status is-${status}`, title: status === 'needs' ? 'Needs you' : 'Working' }) : null,
+      el('button', {
+        class: 'dock-row-x',
+        type: 'button',
+        title: 'Close for good',
+        'aria-label': `Close ${nameFor(node)} for good`,
+        html: icon('x'),
+        onclick: (event) => {
+          event.stopPropagation();
+          hidePreview();
+          ctx.canvas.removeNode(node.id);
+        },
+      })
     );
-    if (node.status === 'working') button.append(el('span', { class: 'dock-busy' }));
-    else if (node.status === 'needs') button.append(el('span', { class: 'dock-busy is-needs' }));
-    return button;
+    return rowEl;
+  }
+
+  /* ------------------------------ stacks ------------------------------- */
+
+  function stack(group, nodes) {
+    const newest = nodes[nodes.length - 1];
+    const waiting = nodes.every((node) => arriving.has(node.id));
+    const needs = nodes.some((node) => node.status === 'needs');
+    const working = nodes.some((node) => node.status === 'working');
+
+    const tileEl = el(
+      'button',
+      {
+        class: `dock-tile${waiting ? ' is-waiting' : ''}`,
+        type: 'button',
+        'data-ids': nodes.map((node) => node.id).join(' '),
+        'aria-label': `Open ${nameFor(newest)}`,
+      },
+      logoFor(newest),
+      nodes.length > 1 ? el('span', { class: 'dock-count', text: String(nodes.length) }) : null,
+      needs || working ? el('span', { class: `dock-busy${needs ? ' is-needs' : ''}` }) : null
+    );
+    tileEl.addEventListener('click', () => restore(newest, tileEl));
+
+    // Newest first in the list, like the order they were closed in reverse.
+    const tray = el(
+      'div',
+      { class: 'dock-tray', role: 'menu' },
+      el(
+        'div',
+        { class: 'dock-tray-head' },
+        el('span', { text: GROUP_LABEL[group] }),
+        el('span', { class: 'dock-tray-count', text: String(nodes.length) })
+      ),
+      el('div', { class: 'dock-tray-list' }, ...[...nodes].reverse().map((node) => row(node, tileEl)))
+    );
+
+    return el('div', { class: 'dock-stack', 'data-group': group }, tileEl, tray);
   }
 
   function render() {
@@ -239,25 +266,10 @@ export function initDock(ctx) {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(node);
     }
-    const stacks = GROUP_ORDER.filter((key) => groups.has(key)).map((key) => {
-      const nodes = groups.get(key);
-      // Newest on top of the stack.
-      const tiles = nodes.map((node, index) => tile(node, index, nodes.length));
-      const stack = el(
-        'div',
-        {
-          class: `dock-stack${nodes.length > 1 ? ' is-stacked' : ''}`,
-          style: { '--count': String(nodes.length), '--step': `${STEP}px` },
-        },
-        ...tiles
-      );
-      if (nodes.length > 1) stack.append(el('span', { class: 'dock-count', text: String(nodes.length) }));
-      return stack;
-    });
+    const stacks = GROUP_ORDER.filter((key) => groups.has(key)).map((key) => stack(key, groups.get(key)));
     dock.replaceChildren(...stacks);
     dock.classList.toggle('is-empty', !parked.length);
     if (!parked.length) hidePreview();
-    seen = new Set(parked.map((node) => node.id));
   }
 
   store.on('dock', render);

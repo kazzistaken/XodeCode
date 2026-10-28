@@ -163,29 +163,43 @@ export function animateSize(el, from, to, { duration = DURATION.move } = {}) {
 }
 
 /**
- * Fly a window into a point on screen (the dock), shrinking and fading as it
- * goes, then call `done`. `scale` is the canvas zoom, so the screen-space
- * offset can be expressed in the window's own (world) units.
+ * Keyframes for a window travelling between itself and a dock icon: it first
+ * shrinks where it is to a small card, then arcs down into the icon (sideways
+ * first, then dropping), ending the icon's size. Offsets are in the window's
+ * own (world) units; `scale` is the canvas zoom.
  */
-export function animateInto(el, point, scale = 1, done = () => {}) {
+function dockFlight(el, point, scale) {
+  const rect = el.getBoundingClientRect();
+  const dx = (point.x - (rect.left + rect.width / 2)) / scale;
+  const dy = (point.y - (rect.top + rect.height / 2)) / scale;
+  const size = Math.max(rect.width, rect.height, 1);
+  const end = Math.max(0.02, (point.size || 36) / size);
+  const card = Math.min(0.42, Math.max(end * 2.5, 200 / size));
+  const mid = (card + end) / 2;
+  return [
+    { offset: 0, transform: 'none', opacity: 1, easing: 'cubic-bezier(0.3, 0, 0.2, 1)' },
+    { offset: 0.34, transform: `translate(${dx * 0.04}px, ${dy * 0.02 - 10 / scale}px) scale(${card})`, opacity: 1, easing: 'cubic-bezier(0.45, 0, 0.55, 1)' },
+    { offset: 0.68, transform: `translate(${dx * 0.62}px, ${dy * 0.38}px) scale(${mid})`, opacity: 1, easing: 'cubic-bezier(0.4, 0, 0.6, 1)' },
+    { offset: 0.9, transform: `translate(${dx * 0.97}px, ${dy * 0.94}px) scale(${end * 1.08})`, opacity: 0.9 },
+    { offset: 1, transform: `translate(${dx}px, ${dy}px) scale(${end})`, opacity: 0 },
+  ];
+}
+
+/**
+ * Close a window into the dock: it shrinks small, then flies into its icon at
+ * `point` ({x, y, size} on screen) and calls `done` as it lands. `scale` is
+ * the canvas zoom; `delay` staggers several windows closing at once.
+ */
+export function animateInto(el, point, scale = 1, done = () => {}, { delay = 0 } = {}) {
   if (prefersReducedMotion() || !point) {
     done();
     return null;
   }
   cancelAll(el);
-  const rect = el.getBoundingClientRect();
-  const dx = (point.x - (rect.left + rect.width / 2)) / scale;
-  const dy = (point.y - (rect.top + rect.height / 2)) / scale;
   const animation = track(
     el,
     'out',
-    el.animate(
-      [
-        { transform: 'none', opacity: 1 },
-        { transform: `translate(${dx}px, ${dy}px) scale(0.08)`, opacity: 0 },
-      ],
-      { duration: 340, easing: 'cubic-bezier(0.5, 0, 0.2, 1)', fill: 'forwards' }
-    )
+    el.animate(dockFlight(el, point, scale), { duration: 640, delay, easing: 'linear', fill: 'both' })
   );
   animation.onfinish = () => {
     done();
@@ -194,21 +208,13 @@ export function animateInto(el, point, scale = 1, done = () => {}) {
   return animation;
 }
 
-/** The reverse of `animateInto`: grow a window out of a point on screen. */
+/** The reverse of `animateInto`: grow a window out of its dock icon. */
 export function animateOutOf(el, point, scale = 1) {
   if (prefersReducedMotion() || !point) return animateIn(el);
-  const rect = el.getBoundingClientRect();
-  const dx = (point.x - (rect.left + rect.width / 2)) / scale;
-  const dy = (point.y - (rect.top + rect.height / 2)) / scale;
-  return track(
-    el,
-    'in',
-    el.animate(
-      [
-        { transform: `translate(${dx}px, ${dy}px) scale(0.08)`, opacity: 0 },
-        { transform: 'none', opacity: 1 },
-      ],
-      { duration: 380, easing: EASE, fill: 'backwards' }
-    )
-  );
+  const frames = dockFlight(el, point, scale)
+    .reverse()
+    .map((frame) => ({ ...frame, offset: 1 - frame.offset, easing: 'cubic-bezier(0.25, 0, 0.2, 1)' }));
+  // Growing out reads better a touch quicker, and visible from the start.
+  frames[0].opacity = 0.4;
+  return track(el, 'in', el.animate(frames, { duration: 520, easing: 'linear', fill: 'backwards' }));
 }

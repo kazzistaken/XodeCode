@@ -42,7 +42,7 @@ const TOUR = [
   {
     target: '#dock',
     title: 'The dock',
-    text: 'Closing a window parks it down here, still running. Hover a logo to see it, click to bring it back, or × to close it for good.',
+    text: 'Closing a window sends it down here, still running. Hover an icon to see its windows, click one to bring it back, or × to close it for good.',
     spot: 'corner',
   },
   {

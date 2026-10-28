@@ -2,6 +2,7 @@ import { el, clamp, uid } from './util.js';
 import { store } from './store.js';
 import { findPlacement } from './placement.js';
 import { TILEABLE, LAYOUT, LAYOUT_MODES, tileRects, contentScaleFor } from './layout.js';
+import { dockArriving, dockLanded, dockTargetFor } from './dock.js';
 import {
   animateIn,
   animateOut,
@@ -416,14 +417,6 @@ export class Canvas {
     return TILEABLE.has(node.kind) || node.kind === 'note';
   }
 
-  /** Screen point the dock animations fly to (its newest slot). */
-  _dockPoint() {
-    const dock = document.querySelector('#dock');
-    if (!dock) return { x: 40, y: window.innerHeight - 40 };
-    const rect = dock.getBoundingClientRect();
-    return { x: rect.right + 22, y: rect.bottom - 22 };
-  }
-
   /**
    * Clear the page into the dock: app windows and notes fly to the bottom-left
    * and wait there, still running; shapes, text and images are removed.
@@ -487,6 +480,8 @@ export class Canvas {
     }
     store.save();
     this.drawJointLines();
+    // Their dock icons wait, hidden, until each window has flown in.
+    dockArriving(list.map((node) => node.id));
     store.emit('dock');
     store.emit('selection', this.selectedId);
 
@@ -510,16 +505,28 @@ export class Canvas {
     const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 450));
 
     Promise.all(list.map((node) => Promise.race([capture(node), timeout]))).then((shots) => {
-      const point = this._dockPoint();
       list.forEach((node, index) => {
         if (shots[index]) this.thumbs.set(node.id, { ...this.thumbs.get(node.id), src: shots[index] });
         const view = this.views.get(node.id);
-        if (!view || !node.parked) return;
+        if (!view || !node.parked) {
+          dockLanded(node.id);
+          return;
+        }
         view.el.classList.add('is-leaving');
-        animateInto(view.el, point, scale, () => {
-          view.el.classList.remove('is-leaving');
-          if (node.parked) view.el.classList.add('is-parked');
-        });
+        // Each shrinks, then flies into its kind's icon; a batch goes one
+        // after another.
+        const delay = Math.min(index, 8) * 45;
+        animateInto(
+          view.el,
+          dockTargetFor(node),
+          scale,
+          () => {
+            view.el.classList.remove('is-leaving');
+            if (node.parked) view.el.classList.add('is-parked');
+            dockLanded(node.id);
+          },
+          { delay }
+        );
       });
       this.relayout({ animate: true, page });
       store.emit('dock');
@@ -561,17 +568,12 @@ export class Canvas {
   }
 
   /**
-   * Screen space the tiles keep clear of, in px: the prompt bar below, the
-   * page bar above while it is pinned, and the dock on the left while it holds
-   * windows (mirrored on the right so the tiles stay centred on the prompt).
+   * Screen space the tiles keep clear of, in px: the prompt bar and the dock
+   * below (they share one band), and the page bar above while it is pinned.
    */
-  layoutInsets(page = store.page) {
+  layoutInsets() {
     const insets = { ...LAYOUT.insets };
     if (store.state.settings.pinTopbar) insets.top = 64;
-    if (page.nodes.some((node) => node.parked)) {
-      insets.left = 84;
-      insets.right = 84;
-    }
     return insets;
   }
 

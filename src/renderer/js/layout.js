@@ -29,8 +29,8 @@ export const LAYOUT = {
   aspect: 1.6, // the w/h shape a tile would like to have
   maxAspect: 2.3, // wider than this and a lone window is narrowed, centred
   // Clear of the floating chrome: the page bar's handle on top, the prompt
-  // bar at the bottom. Left and right stay equal so the tiles centre on the
-  // prompt bar; canvas.js widens them while the dock holds windows.
+  // bar and the dock (which share the bottom band) below. canvas.js adds
+  // room on top while the page bar is pinned.
   insets: { top: 16, right: 16, bottom: 80, left: 16 },
 };
 
