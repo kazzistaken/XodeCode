@@ -3,34 +3,14 @@ import { icon } from './icons.js';
 import { store } from './store.js';
 import { openOverlay, closeOverlay } from './overlay.js';
 import { BACKGROUNDS, setBackgroundPreset } from './backgrounds.js';
+import { sceneThumb } from './scenes/view.js';
 
 const TABS = [
-  { id: 'style', label: 'Style', icon: 'style', blurb: 'Themes and atmosphere.' },
-  { id: 'canvas', label: 'Canvas', icon: 'canvas', blurb: 'How the canvas behaves.' },
-  { id: 'agents', label: 'Agents', icon: 'agents', blurb: 'Claude Code and your terminals.' },
-  { id: 'director', label: 'Director', icon: 'sparkle', blurb: 'The session that runs your agents.' },
-  { id: 'shortcuts', label: 'Shortcuts', icon: 'shortcuts', blurb: 'Every key that matters.' },
-];
-
-const THEMES = [
-  {
-    id: 'nightglass',
-    name: 'Graphite',
-    desc: 'Clay accent',
-    swatch: 'linear-gradient(135deg,#202024 0%,#111113 55%,#d97757 100%)',
-  },
-  {
-    id: 'cupola',
-    name: 'Slate',
-    desc: 'Blue accent',
-    swatch: 'linear-gradient(135deg,#202024 0%,#111113 55%,#7aa6e8 100%)',
-  },
-  {
-    id: 'ember',
-    name: 'Ash',
-    desc: 'Amber accent',
-    swatch: 'linear-gradient(135deg,#202024 0%,#111113 55%,#e0a64a 100%)',
-  },
+  { id: 'appearance', label: 'Appearance', icon: 'style', blurb: 'The scene behind your windows and how the app looks.' },
+  { id: 'canvas', label: 'Canvas', icon: 'grid', blurb: 'How windows are placed and arranged.' },
+  { id: 'agents', label: 'Agents', icon: 'agents', blurb: 'Claude Code sessions and your terminals.' },
+  { id: 'director', label: 'Director', icon: 'sparkle', blurb: 'The assistant that runs your agents, and dictation.' },
+  { id: 'shortcuts', label: 'Shortcuts', icon: 'shortcuts', blurb: 'Keys worth knowing.' },
 ];
 
 const MODEL_LABEL = {
@@ -91,11 +71,28 @@ function settingRow({ title, desc, value, onChange }) {
 
 const groupLabel = (text) => el('div', { class: 'group-label', text });
 
+/** Put each run of rows under a heading into one rounded group. */
+function groupRows(body) {
+  let group = null;
+  for (const child of Array.from(body.children)) {
+    if (child.matches('.setting, .field-row')) {
+      if (!group) {
+        group = el('div', { class: 'setting-group' });
+        child.before(group);
+      }
+      group.append(child);
+    } else {
+      group = null;
+    }
+  }
+}
+
 export function initSettings(ctx) {
-  let activeTab = 'agents';
+  let activeTab = 'appearance';
 
   function sheet() {
     const nav = el('nav', { class: 'sheet-nav' }, el('h2', { text: 'Settings' }));
+    if (!TABS.some((item) => item.id === activeTab)) activeTab = 'appearance';
     const main = el('div', { class: 'sheet-main' });
 
     const renderMain = () => {
@@ -120,34 +117,127 @@ export function initSettings(ctx) {
       const body = el('div', { class: 'sheet-body' });
       main.append(body);
 
-      if (tab.id === 'style') {
-        body.append(groupLabel('Theme'));
-        const grid = el('div', { class: 'theme-grid' });
-        for (const theme of THEMES) {
-          grid.append(
-            el(
-              'button',
-              {
-                class: `theme-card${store.state.theme === theme.id ? ' is-active' : ''}`,
-                type: 'button',
-                onclick: () => {
-                  store.setTheme(theme.id);
-                  renderMain();
-                },
+      if (tab.id === 'appearance') {
+        const settings = store.state.settings;
+        const current = settings.background ? settings.backgroundPreset || 'custom' : 'none';
+        // Built-in scenes plus "no picture", as preview cards.
+        const card = (id, label, thumb, onPick) =>
+          el(
+            'button',
+            {
+              class: `bg-card${current === id ? ' is-active' : ''}`,
+              type: 'button',
+              title: label,
+              onclick: () => {
+                onPick();
+                renderMain();
               },
-              el('div', { class: 'theme-swatch', style: { background: theme.swatch } }),
-              el('div', { class: 'theme-name', text: theme.name }),
-              el('div', { class: 'theme-desc', text: theme.desc })
+            },
+            thumb,
+            el('span', { class: 'bg-card-label', text: label })
+          );
+        const thumbFor = (style) => el('span', { class: 'bg-card-thumb', style });
+        const cards = [
+          card('none', 'Dot grid', thumbFor({ backgroundColor: 'var(--canvas)' }), () => setBackgroundPreset('none')),
+          ...BACKGROUNDS.map((preset) =>
+            card(
+              preset.id,
+              preset.label,
+              preset.scene
+                ? sceneThumb(preset.scene)
+                : thumbFor({
+                    backgroundImage: `url("${preset.src}")`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    imageRendering: preset.pixelated ? 'pixelated' : 'auto',
+                  }),
+              () => setBackgroundPreset(preset.id)
+            )
+          ),
+        ];
+        if (current === 'custom') {
+          cards.push(
+            card(
+              'custom',
+              'Your picture',
+              thumbFor({ backgroundImage: `url("${settings.background}")`, backgroundSize: 'cover', backgroundPosition: 'center' }),
+              () => {}
             )
           );
         }
-        body.append(grid);
+
         body.append(
-          groupLabel('Look'),
+          groupLabel('Background'),
+          el('div', { class: 'bg-cards' }, ...cards),
+          el(
+            'div',
+            { class: 'field-row' },
+            el(
+              'div',
+              { class: 'setting-text' },
+              el('div', { class: 'setting-title', text: 'Your own picture' }),
+              el('div', { class: 'setting-desc', text: 'It keeps its proportions: Fill crops the edges, Fit shows all of it.' })
+            ),
+            settings.background && !settings.backgroundPreset
+              ? (() => {
+                  const select = el('select', {
+                    class: 'voice-select',
+                    'aria-label': 'Picture fit',
+                    onchange: (event) => {
+                      store.setSetting('backgroundFit', event.target.value);
+                      renderMain();
+                    },
+                  });
+                  const fit = settings.backgroundFit || 'contain';
+                  for (const [value, label] of [
+                    ['cover', 'Fill'],
+                    ['contain', 'Fit'],
+                    ['center', 'Actual size'],
+                    ['tile', 'Tile'],
+                  ]) {
+                    const option = el('option', { value, text: label });
+                    if (value === fit) option.selected = true;
+                    select.append(option);
+                  }
+                  return select;
+                })()
+              : null,
+            el('button', {
+              class: 'btn',
+              type: 'button',
+              text: 'Choose…',
+              onclick: async () => {
+                try {
+                  const picked = await window.api.sys.pickImage();
+                  if (!picked) return;
+                  const dataUrl = await downscaleImage(picked.dataUrl);
+                  setBackgroundPreset('none');
+                  store.state.settings.backgroundFit = 'cover';
+                  store.setSetting('background', dataUrl);
+                  renderMain();
+                } catch (error) {
+                  ctx.toast(error?.message || 'Could not use that picture.', 'warn');
+                }
+              },
+            })
+          ),
           settingRow({
-            title: 'Flat colors',
-            desc: 'Swap the frosted-glass look for plain solid colors: no see-through panels and no blur.',
-            value: Boolean(store.state.settings.flatUi),
+            title: 'Animate the scene',
+            desc: 'Water, light and weather move gently. Pauses while XodeCode is minimized.',
+            value: settings.animateScene !== false,
+            onChange: (value) => store.setSetting('animateScene', value),
+          }),
+          groupLabel('Interface'),
+          settingRow({
+            title: 'Always show the page bar',
+            desc: 'Keep pages and menus at the top instead of showing them when you point at the top edge or press Alt.',
+            value: Boolean(settings.pinTopbar),
+            onChange: (value) => store.setSetting('pinTopbar', value),
+          }),
+          settingRow({
+            title: 'Solid panels',
+            desc: 'Use plain solid colors instead of see-through panels.',
+            value: Boolean(settings.flatUi),
             onChange: (value) => store.setSetting('flatUi', value),
           })
         );
@@ -155,139 +245,10 @@ export function initSettings(ctx) {
 
       if (tab.id === 'canvas') {
         body.append(
-          groupLabel('Background'),
-          (() => {
-            // Built-in backgrounds plus "no image", as preview cards.
-            const settings = store.state.settings;
-            const current = settings.background ? settings.backgroundPreset || 'custom' : 'none';
-            const card = (id, label, style, onPick) =>
-              el(
-                'button',
-                {
-                  class: `bg-card${current === id ? ' is-active' : ''}`,
-                  type: 'button',
-                  title: label,
-                  onclick: () => {
-                    onPick();
-                    renderMain();
-                  },
-                },
-                el('span', { class: 'bg-card-thumb', style }),
-                el('span', { class: 'bg-card-label', text: label })
-              );
-            const cards = [
-              card('none', 'Dot grid', { backgroundColor: 'var(--canvas)' }, () => setBackgroundPreset('none')),
-              ...BACKGROUNDS.map((preset) =>
-                card(
-                  preset.id,
-                  preset.label,
-                  {
-                    backgroundImage: `url("${preset.src}")`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    imageRendering: preset.pixelated ? 'pixelated' : 'auto',
-                  },
-                  () => {
-                    setBackgroundPreset(preset.id);
-                    ctx.toast(`Background: ${preset.label}`);
-                  }
-                )
-              ),
-            ];
-            if (current === 'custom') {
-              cards.push(
-                card(
-                  'custom',
-                  'Your image',
-                  { backgroundImage: `url("${settings.background}")`, backgroundSize: 'cover', backgroundPosition: 'center' },
-                  () => {}
-                )
-              );
-            }
-            return el('div', { class: 'bg-cards' }, ...cards);
-          })(),
-          el(
-            'div',
-            { class: 'field-row' },
-            el('button', {
-              class: 'btn',
-              type: 'button',
-              text: 'Use my own image…',
-              onclick: async () => {
-                try {
-                  const picked = await window.api.sys.pickImage();
-                  if (!picked) return;
-                  const dataUrl = await downscaleImage(picked.dataUrl);
-                  store.state.settings.backgroundPreset = '';
-                  store.state.settings.backgroundPixel = false;
-                  store.setSetting('background', dataUrl);
-                  ctx.toast('Background set.');
-                  renderMain();
-                } catch (error) {
-                  ctx.toast(error?.message || 'Could not set the background.', 'warn');
-                }
-              },
-            })
-          ),
-          store.state.settings.background
-            ? (() => {
-                // A true-to-screen preview: same proportions as this window
-                // and the same fit rule as the canvas, so nothing is stretched.
-                const settings = store.state.settings;
-                const fit = settings.backgroundFit || 'contain';
-                const preview = el('div', {
-                  class: 'background-preview',
-                  role: 'img',
-                  'aria-label': 'Background preview',
-                  style: {
-                    aspectRatio: `${window.innerWidth} / ${window.innerHeight}`,
-                    backgroundImage: `url("${settings.background}")`,
-                    backgroundSize: fit === 'cover' ? 'cover' : fit === 'contain' ? 'contain' : 'auto',
-                    backgroundRepeat: fit === 'tile' ? 'repeat' : 'no-repeat',
-                    imageRendering: settings.backgroundPixel ? 'pixelated' : 'auto',
-                  },
-                });
-                return preview;
-              })()
-            : null,
-          el('div', {
-            class: 'setting-desc',
-            style: { margin: '0 0 10px' },
-            text: 'A picture replaces the dot grid behind the canvas. It keeps its proportions — Fill crops the edges, Fit shows the whole image.',
-          }),
-          store.state.settings.background
-            ? el(
-                'div',
-                { class: 'field-row' },
-                el('span', { class: 'setting-title', text: 'Image fit' }),
-                (() => {
-                  const select = el('select', {
-                    class: 'voice-select',
-                    'aria-label': 'Background image fit',
-                    onchange: (event) => {
-                      store.setSetting('backgroundFit', event.target.value);
-                      renderMain();
-                    },
-                  });
-                  const current = store.state.settings.backgroundFit || 'contain';
-                  for (const [value, label] of [
-                    ['cover', 'Fill — crop edges'],
-                    ['contain', 'Fit — whole image'],
-                    ['center', 'Actual size'],
-                    ['tile', 'Tile'],
-                  ]) {
-                    const option = el('option', { value, text: label });
-                    if (value === current) option.selected = true;
-                    select.append(option);
-                  }
-                  return select;
-                })()
-              )
-            : null,
           groupLabel('Layout'),
           settingRow({
             title: 'Auto-arrange windows',
-            desc: 'Keep every app window side by side, resized to fill the screen. Turn off to place windows freely.',
+            desc: 'Keep every window in order automatically. Turn off to place windows freely.',
             value: store.state.settings.autoLayout !== false,
             onChange: (value) => {
               store.setSetting('autoLayout', value);
@@ -296,7 +257,7 @@ export function initSettings(ctx) {
           }),
           settingRow({
             title: 'Arrange windows side by side',
-            desc: 'New windows open right beside the last one, in rows, each at its own size; zoom out to see them all. Turn off to shrink every window so they all fit on one screen.',
+            desc: 'New windows open beside the last one, in rows, each at its own size; zoom out to see them all. Turn off to shrink every window so they fit on one screen.',
             value: store.state.settings.fullSizeWindows !== false,
             onChange: (value) => {
               store.setSetting('fullSizeWindows', value);
@@ -305,32 +266,16 @@ export function initSettings(ctx) {
           }),
           settingRow({
             title: 'Snap to grid',
-            desc: 'Windows settle onto the dot grid as you move them.',
+            desc: 'Windows settle onto the grid as you move them.',
             value: store.state.settings.snapToGrid,
             onChange: (value) => store.setSetting('snapToGrid', value),
           }),
-          settingRow({
-            title: 'Use the Windows voice typing panel',
-            desc: 'Off (default): dictation runs inside XodeCode, with your words appearing live in the prompt box and no Windows pop-up. On: the mic opens Windows voice typing (Win+H) and its panel instead.',
-            value: store.state.settings.dictation === 'windows',
-            onChange: (value) => {
-              store.state.settings.dictationChosen = true;
-              store.setSetting('dictation', value ? 'windows' : 'app');
-            },
-          }),
-          groupLabel('Notifications'),
-          settingRow({
-            title: 'Agent notifications',
-            desc: 'Show a tile when an agent you cannot see finishes or needs you, plus a system notification while the app is in the background.',
-            value: store.state.settings.agentNotifications,
-            onChange: (value) => store.setSetting('agentNotifications', value),
-          }),
-          groupLabel('This tab\u2019s workspace'),
+          groupLabel('This page’s workspace'),
           el(
             'div',
             { class: 'field-row' },
             el('code', {
-              text: store.page.workspace || 'Not set — agents start in your home folder',
+              text: store.page.workspace || 'Not set. Agents start in your home folder.',
             }),
             el('button', {
               class: 'btn',
@@ -392,8 +337,15 @@ export function initSettings(ctx) {
                 text: 'Sonnet 5.5 by default, Opus 5.5 for hard work. Haiku and Fable are used only when you ask for them by name.',
               })
             ),
-            el('span', { class: 'policy-tag', text: 'S5.5 +' })
+            el('span', { class: 'policy-tag', text: 'Default' })
           ),
+          groupLabel('Notifications'),
+          settingRow({
+            title: 'Agent notifications',
+            desc: 'List agents you cannot see when they finish or need you (top right), and send a system notification while XodeCode is in the background.',
+            value: store.state.settings.agentNotifications,
+            onChange: (value) => store.setSetting('agentNotifications', value),
+          }),
           groupLabel('Permissions'),
           settingRow({
             title: 'Full permissions',
@@ -427,7 +379,7 @@ export function initSettings(ctx) {
           el(
             'div',
             { class: 'field-row' },
-            el('code', { text: 'headless session · opens, closes and arranges windows, prompts agents' }),
+            el('code', { text: 'Opens, closes and arranges windows, and prompts agents' }),
             el('span', { class: `director-pill is-${status.status}`, text: status.status })
           ),
           el(
@@ -483,6 +435,16 @@ export function initSettings(ctx) {
             }),
             el('code', { text: ctx.sysInfo?.paths?.cli || 'bin/xode.js' })
           ),
+          groupLabel('Dictation'),
+          settingRow({
+            title: 'Use the Windows voice typing panel',
+            desc: 'Off: dictation runs inside XodeCode and your words appear live in the prompt. On: the mic opens Windows voice typing (Win+H) and its panel instead.',
+            value: store.state.settings.dictation === 'windows',
+            onChange: (value) => {
+              store.state.settings.dictationChosen = true;
+              store.setSetting('dictation', value ? 'windows' : 'app');
+            },
+          }),
           groupLabel('Shared context'),
           el('div', {
             class: 'setting-desc',
@@ -575,14 +537,15 @@ export function initSettings(ctx) {
         }
       }
 
+      groupRows(body);
+
       main.append(
         el(
           'div',
           { class: 'sheet-foot' },
           el('span', { text: `XodeCode ${ctx.sysInfo?.version || '0.1.0'}` }),
-          el('span', { text: `· ${ctx.sysInfo?.shell || 'shell'}` }),
           el('span', {
-            text: `· ${ctx.sysInfo?.platform || ''}`,
+            text: `${ctx.sysInfo?.shell || 'shell'} on ${ctx.sysInfo?.platform || ''}`,
             style: { marginLeft: 'auto' },
           })
         )

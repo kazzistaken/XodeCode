@@ -5,7 +5,7 @@ const { app, BrowserWindow, ipcMain, dialog, net, protocol, shell, clipboard, we
 // Dev/test hook: run against a throwaway profile instead of the real one.
 if (process.env.XODECODE_USERDATA) app.setPath('userData', process.env.XODECODE_USERDATA);
 // The stress test must never start a Claude process (Director, chats or agents).
-const NO_CLAUDE = ['stress', 'onboard'].includes(process.env.XODECODE_TEST_KIND);
+const NO_CLAUDE = ['stress', 'onboard', 'look'].includes(process.env.XODECODE_TEST_KIND);
 if (NO_CLAUDE) {
   // Measure real frames: never throttle the test window when it is covered.
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
@@ -238,8 +238,8 @@ Claude Code sessions
 Pages and app
 - {op:"page", index} · {op:"page", add:true, name?} · {op:"page", close:index} ·
   {op:"page", rename:index, name}
-- {op:"workspace", path} · {op:"theme", id:"graphite"|"slate"|"ash"} · {op:"notify", text}
-- {op:"background", id:"aurora"|"sunset"|"nebula"|"deepsea"|"dusk-forest"|"midnight-grid"|"none"}  switch the canvas background.
+- {op:"workspace", path} · {op:"notify", text}
+- {op:"background", id:"harbor"|"lake"|"sunset"|"canal"|"glen"|"reef"|"none"}  switch the animated background scene (harbour at dusk, moonlit lake, sunset lake, rainy canal, waterfall glen, coral reef) or back to the dot grid.
 - {op:"undo"} · {op:"redo"} · {op:"open", target:"settings"|"map"}
 
 # Writing prompts for agents (agent, send, joint, joint_add, joint_brief)
@@ -1641,9 +1641,10 @@ function createWindow() {
     const { runTeamTest, runAgentToolTest } = require('./teamtest');
     const { runStressTest } = require('./stresstest');
     const { runOnboardTest } = require('./onboardtest');
+    const { runLookTest } = require('./looktest');
     const kind = process.env.XODECODE_TEST_KIND;
-    const runTest =
-      kind === 'agent' ? runAgentToolTest : kind === 'stress' ? runStressTest : kind === 'onboard' ? runOnboardTest : runTeamTest;
+    const tests = { agent: runAgentToolTest, stress: runStressTest, onboard: runOnboardTest, look: runLookTest };
+    const runTest = tests[kind] || runTeamTest;
     mainWindow.webContents.once('did-finish-load', () => {
       runTest(mainWindow, { url: control.url, token: control.token, agentToken: control.agentToken }).catch((error) => {
         console.log(`TEAMTEST_FAIL ${error && error.message}`);

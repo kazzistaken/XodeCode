@@ -33,7 +33,7 @@ export const LAYOUT = {
   // Floating chrome plus a generous border all round, so the windows sit
   // framed on the canvas instead of running edge to edge. The left side also
   // clears the dock.
-  insets: { top: 40, right: 44, bottom: 72, left: 44 },
+  insets: { top: 20, right: 44, bottom: 96, left: 44 },
 };
 
 /**

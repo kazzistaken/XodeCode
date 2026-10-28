@@ -43,10 +43,11 @@ async function runOnboardTest(mainWindow) {
   await wait(700);
   await shot('4-ready');
   await click('Show me around');
-  for (let i = 1; i <= 8; i += 1) {
+  const steps = 6;
+  for (let i = 1; i <= steps; i += 1) {
     await wait(900);
     await shot(`5-tour-${i}`);
-    if (!(await click(i === 8 ? 'Finish' : 'Next'))) console.log('ONBOARD_MISSING_BUTTON', i);
+    if (!(await click(i === steps ? 'Finish' : 'Next'))) console.log('ONBOARD_MISSING_BUTTON', i);
   }
   await wait(600);
   console.log('ONBOARD_DONE', await run(`({ onboarded: window.__xo.store.state.settings.onboarded, open: Boolean(document.querySelector('.onboard')) })`));

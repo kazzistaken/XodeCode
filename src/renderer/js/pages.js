@@ -1,4 +1,4 @@
-import { $, el } from './util.js';
+import { $, el, MOD } from './util.js';
 import { icon } from './icons.js';
 import { store } from './store.js';
 import { openOverlay, closeOverlay } from './overlay.js';
@@ -93,10 +93,11 @@ export function initPages(ctx) {
           'div',
           {
             class: `tab${active ? ' is-active' : ''}`,
+            'data-page-id': page.id,
             role: 'tab',
             tabindex: '0',
             'aria-selected': String(active),
-            title: `${page.name} — double-click to rename`,
+            title: index < 9 ? `${page.name} (${MOD} ${index + 1}). Double-click to rename.` : `${page.name}. Double-click to rename.`,
             onclick: () => store.setActivePage(index),
             ondblclick: (event) => {
               event.preventDefault();
@@ -109,7 +110,6 @@ export function initPages(ctx) {
               }
             },
           },
-          el('span', { class: 'tab-num', text: String(index + 1).padStart(2, '0') }),
           nameEl,
           agents
             ? el('span', {
@@ -146,6 +146,7 @@ export function initPages(ctx) {
         },
       })
     );
+    store.emit('tabs');
   }
 
   function openMap() {

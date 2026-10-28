@@ -1,81 +1,56 @@
 import { store } from './store.js';
+import { SCENES } from './scenes/index.js';
 
 /**
- * Built-in canvas backgrounds. Pixel art is drawn with crisp, unsmoothed
- * scaling and always fills the screen without changing its proportions
- * (`cover` crops the edges; it never stretches).
+ * Built-in backgrounds: animated pixel-art scenes (scenes/), drawn behind the
+ * canvas and filling the screen whatever the zoom.
  */
-export const BACKGROUNDS = [
-  {
-    id: 'aurora',
-    label: 'Northern lights',
-    src: 'app://xodecode/assets/backgrounds/aurora.svg',
-    fit: 'cover',
-    pixelated: false,
-    // Colour around the picture when you zoom out past its edges.
-    base: '#04060f',
-  },
-  {
-    id: 'sunset',
-    label: 'Sunset lake',
-    src: 'app://xodecode/assets/backgrounds/sunset.png',
-    fit: 'cover',
-    pixelated: true,
-    base: '#1a0f24',
-  },
-  // Calm, dark scenes with slight motion (stilled by prefers-reduced-motion).
-  {
-    id: 'nebula',
-    label: 'Quiet nebula',
-    src: 'app://xodecode/assets/backgrounds/nebula.svg',
-    fit: 'cover',
-    pixelated: false,
-    base: '#05061a',
-  },
-  {
-    id: 'deepsea',
-    label: 'Deep sea',
-    src: 'app://xodecode/assets/backgrounds/deepsea.svg',
-    fit: 'cover',
-    pixelated: false,
-    base: '#02060d',
-  },
-  {
-    id: 'dusk-forest',
-    label: 'Dusk forest',
-    src: 'app://xodecode/assets/backgrounds/dusk-forest.svg',
-    fit: 'cover',
-    pixelated: false,
-    base: '#0c0914',
-  },
-  {
-    id: 'midnight-grid',
-    label: 'Midnight grid',
-    src: 'app://xodecode/assets/backgrounds/midnight-grid.svg',
-    fit: 'cover',
-    pixelated: false,
-    base: '#03040b',
-  },
-];
+export const BACKGROUNDS = SCENES.map((scene) => ({ id: scene.id, label: scene.label, scene: scene.id, base: scene.base }));
+
+/** Words people use for each scene, plus the names of the old backgrounds. */
+const ALIASES = {
+  harbor: ['harbour', 'harbor', 'lighthouse', 'lantern', 'port', 'dusk'],
+  lake: ['lake', 'moon', 'moonlit', 'mountain', 'mountains', 'night', 'aurora', 'northern lights', 'nebula', 'space', 'stars'],
+  sunset: ['sunset', 'sunset lake', 'sun', 'evening'],
+  canal: ['canal', 'rain', 'rainy', 'city', 'midnight', 'midnight grid', 'midnight-grid'],
+  glen: ['glen', 'waterfall', 'forest', 'dusk forest', 'dusk-forest', 'woods'],
+  reef: ['reef', 'coral', 'underwater', 'ocean', 'sea', 'deep sea', 'deepsea', 'fish'],
+};
 
 export function findBackground(id) {
-  return BACKGROUNDS.find((background) => background.id === id) || null;
+  const key = String(id || '').toLowerCase().trim();
+  const direct = BACKGROUNDS.find((background) => background.id === key);
+  if (direct) return direct;
+  for (const [sceneId, words] of Object.entries(ALIASES)) {
+    if (words.includes(key)) return BACKGROUNDS.find((background) => background.id === sceneId) || null;
+  }
+  return null;
 }
 
-/** Switch to a built-in background, or back to the dot grid with "none". */
+/** Switch to a built-in scene, or back to the dot grid with "none". */
 export function setBackgroundPreset(id) {
+  const settings = store.state.settings;
   const preset = findBackground(id);
   if (!preset) {
-    store.state.settings.backgroundPreset = '';
-    store.state.settings.backgroundPixel = false;
-    store.state.settings.backgroundBase = '';
+    settings.backgroundPreset = '';
+    settings.backgroundScene = '';
+    settings.backgroundPixel = false;
+    settings.backgroundBase = '';
     store.setSetting('background', '');
     return null;
   }
-  store.state.settings.backgroundPreset = preset.id;
-  store.state.settings.backgroundPixel = preset.pixelated;
-  store.state.settings.backgroundFit = preset.fit;
-  store.state.settings.backgroundBase = preset.base || '';
-  store.setSetting('background', preset.src);
+  settings.backgroundPreset = preset.id;
+  settings.backgroundScene = preset.scene;
+  settings.backgroundPixel = true;
+  settings.backgroundBase = preset.base;
+  store.setSetting('background', `scene:${preset.scene}`);
   return preset;
+}
+
+/** Profiles from before the scenes used picture files; move them over. */
+export function migrateBackground() {
+  const settings = store.state.settings;
+  if (settings.backgroundPreset && !String(settings.background || '').startsWith('scene:')) {
+    setBackgroundPreset(settings.backgroundPreset);
+  }
 }

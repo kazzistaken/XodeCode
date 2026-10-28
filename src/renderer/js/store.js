@@ -35,8 +35,15 @@ function defaults() {
       dictation: 'app',
       directorModel: 'claude-sonnet-5-5',
       directorEffort: 'low',
-      background: '',
+      // New installs open on an animated scene (backgrounds.js).
+      background: 'scene:harbor',
+      backgroundPreset: 'harbor',
+      backgroundScene: 'harbor',
+      backgroundPixel: true,
+      backgroundBase: '#141331',
       backgroundFit: 'contain',
+      animateScene: true,
+      pinTopbar: false,
       // Tiled windows are screen-sized; zoom out to see them all.
       fullSizeWindows: true,
       agentFullPermissions: true,

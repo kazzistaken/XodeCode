@@ -177,17 +177,17 @@ The GUI-chat mode needs this even more than terminals do: it runs `claude -p` (p
 
 ## Canvas
 
-- Infinite canvas with a dot grid — drag empty canvas (or use the middle mouse button) to pan. **The scroll wheel zooms** (no modifier needed); scroll over a terminal, note or chat to scroll that instead. Dragging inside a window never pans the canvas.
+- Infinite canvas over an animated pixel-art scene (or a plain dot grid) — drag empty canvas (or use the middle mouse button) to pan. **The scroll wheel zooms** (no modifier needed); scroll over a terminal, note or chat to scroll that instead. Dragging inside a window never pans the canvas.
 - Freeform windows: drag by the title bar, resize from the bottom-right grip.
 - **New terminals snap into a tidy grid** — the first free cell, origin-anchored, instead of stacking at random.
 - The **×** in a window's title bar closes it and kills its PTY.
-- Pages are browser-style tabs at the top: click to switch, double-click to rename, the **×** closes one, and **+** adds a new page. `Ctrl` `1`…`9` jumps straight to a page.
+- **The page bar** stays hidden until you want it: point at the small arrow at the top centre (or the top edge), or press `Alt`, and it slides down with your pages, the menus and the window buttons. Click a page to switch, double-click to rename, **×** closes one and **+** adds one; `Ctrl` `1`…`9` jumps straight to a page. **View ▸ Always show the page bar** (or Settings ▸ Appearance) keeps it down.
 - **Each tab has its own workspace folder.** When you add a tab it asks you to pick a folder; every terminal and agent you open on that tab starts there, and the tab is named after the folder. Change it any time from the empty-canvas button or **Settings → Canvas**.
-- A **File / Edit / View / Help** menu bar in the title bar holds the app commands: new terminals, workspace folder, new/close page, settings, map, director log, zoom and themes.
+- **File / Edit / View / Help** menus in the page bar hold the app commands: new terminals, workspace folder, new/close page, settings, map, director log and zoom.
 - Terminals support copy and paste: `Ctrl` `C` / `Ctrl` `Insert` copies a selection, `Ctrl` `V` / `Shift` `Insert` pastes.
 - **Music player** windows (`File ▸ New music player`, or ask the Director to `music`): a **Radio** tab that searches and plays internet radio (free Radio Browser API, no key) and a **Spotify** tab that embeds the official player for any track/album/playlist link you paste.
 - **In-app browser** windows render real pages on the canvas (back / forward / reload / address bar). Open one from **File ▸ New browser**, or ask the Director to `browser --url "…"`. Pages stay inside the app — never the system browser.
-- The mic button at the left of the prompt (or `Ctrl` `Shift` `M`) dictates into the prompt box you were last using — the Director bar, an agent's chat, or the Director sheet. By default it opens **Windows voice typing** (Win+H), Windows' own accurate, punctuated dictation, which types straight into that box. Settings → Canvas can switch to the built-in engine (`scripts/dictate.ps1`) instead.
+- The mic button at the left of the prompt (or `Ctrl` `Shift` `M`) dictates into the prompt box you were last using — the Director bar, an agent's chat, or the Director sheet. By default it uses Windows' own speech engine inside XodeCode, with your words appearing live in the box and no Windows pop-up; **Settings ▸ Director ▸ Dictation** can switch to the Windows voice typing panel (Win+H) instead.
 - No tool rail: the canvas always grabs. Rectangle, diamond, ellipse, arrow, line, freehand draw, text and sticky note are on keyboard shortcuts (`R` `D` `O` `A` `L` `P` `T` `N`), and `V` returns to grabbing. Drop an image file anywhere to place it.
 - **The dock.** Closing a window — its ×, asking the Director, or *clear the canvas* — sends it to the **dock** in the bottom-left instead of killing it; it keeps running there. Windows of the same kind **stack** into one rounded logo tile (site icons for browsers). Hover a stack and its tiles **slide out**; hover a tile to see a **preview** of the window as it was (a snapshot of its contents) and a ghost outline of where it sat. Click to bring it back; the small **×** on a tile closes it for good. Ask for "permanently" / "for good" and the Director closes outright.
 - **Text follows the window.** Make a window bigger and its text grows with it; make it smaller and the text shrinks (terminals, chats, browsers, notes, boards and the music player).
@@ -198,15 +198,16 @@ The GUI-chat mode needs this even more than terminals do: it runs `claude -p` (p
 - **Multi-select**: `Shift`-click to add, `Shift`-drag on empty canvas to marquee, `Ctrl` `A` for all, drag to move the group, `Ctrl` `D` to duplicate, `Delete` to remove.
 - **Task board** node (`File ▸ New task board`, or `board`): a kanban the Director keeps updated as workstreams move from *todo* to *doing* to *done*.
 - **Spend tracking + budget cap**: GUI-chat runs record their cost; set a cap in **Settings → Director** and the Director checks `budget` before big spends.
-- Layout, pages, notes and themes persist in local storage.
+- Layout, pages, notes and settings persist in local storage.
 - **Claude GUI mode** (off by default): turn it on in **Settings → Canvas** and Claude agents look exactly like the Claude Code terminal UI — the welcome box, `>` prompts, `⏺` bullets, tool calls such as `Bash(npm test)` with their `⎿` results (long output folds behind *+N lines*), red/green diffs for edits, todo checklists, the `✻` spinner, the bordered input box and slash commands (`/model`, `/effort`, `/clear`, `/resume`, `/cost`, `/help`) — but drawn as crisp HTML that scales with the window. It talks to `claude -p --output-format stream-json` and resumes the same session for every message. **Chats are saved** (`%APPDATA%\xodecode\chats`) and survive restarts.
 - Terminals render supersampled (1.5×) so text stays crisp.
-- **Backgrounds**: pick **Northern lights** (an original night-sky scene), **Sunset lake** (pixel art, drawn crisp), one of four calm, dark, gently moving scenes (**Quiet nebula**, **Deep sea**, **Dusk forest**, **Midnight grid**; the motion stops if your system asks for reduced motion) or your own picture in **Settings → Canvas**, with a true-to-screen preview. Pictures are never stretched. The picture always **fills the screen** behind the canvas and stays the same size however far you zoom or pan.
+- **Animated backgrounds**: six original pixel-art scenes, all drawn from code: **Lantern harbour** (lanterns, moored boats, a lighthouse sweeping its beam), **Moonlit lake** (mountains, a glittering moon path, fireflies), **Sunset lake**, **Rain canal** (lit windows, rain, rings on the water), **Waterfall glen** and **Reef shallows** (caustics, kelp, fish). Water moves, lights flicker, weather drifts. Each scene pixel covers a whole number of screen pixels, so it stays crisp at any window size; it fills the screen and stays put however far you zoom or pan. The animation runs in a worker at 12 frames a second, holds still while you pan or zoom, pauses when XodeCode is minimized, and stops for reduced motion or **Settings ▸ Appearance ▸ Animate the scene**. You can also use the dot grid or your own picture.
 
 ## Attention
 
-- When an agent you cannot see finishes or asks a question, a notification tile appears above the command bar with its own words and options; a "N agents waiting" chip folds the stack away.
-- The waiting chip and notification stack sit above the command bar, so they never cover the prompt.
+- Everything that wants your attention appears in one place, the **top-right corner**: short one-line notes (they fade after a few seconds; hover to keep one) and, below them, a compact row for each agent you cannot see that finished or needs you.
+- Hover an agent that is asking a numbered question to answer it right there; click the row to jump to the agent. More than three fold into "N more waiting".
+- A small dot on the page bar's arrow (and on the page's tab) shows that an agent on another page is waiting.
 
 ## Shortcuts
 
@@ -241,13 +242,14 @@ src/main/
   smoke.js             dev smoke test (XODECODE_SMOKE=shot.png)
 src/renderer/
   index.html
-  styles.css           design tokens, themes, all component styles
+  styles.css           design tokens and all component styles
   js/
     app.js             bootstrap, shortcuts, window chrome
     director.js        headless Director session, transcript
     directorpanel.js   Director chat panel + full conversation sheet
     dock.js            parked-app dock (bottom-left)
-    backgrounds.js     built-in canvas backgrounds
+    backgrounds.js     built-in backgrounds (scene list and names)
+    scenes/            animated pixel-art scenes, their toolkit and render worker
     richtext.js        safe Markdown for chat transcripts
     control.js         RPC methods → app actions, model policy
     canvas.js          viewport, grid placement, drag/resize, shapes
@@ -260,9 +262,10 @@ src/renderer/
     claudechat.js      Claude GUI mode (chat)
     menubar.js         File / Edit / View / Help menus
     voice.js           mic button + dictation wiring
-    notifications.js   notification tiles and waiting chip
+    notifications.js   top-right notification stack
     settings.js        settings sheet
-    pages.js           top tab strip + map overlay
+    pages.js           page tabs + map overlay
+    topbar.js          page bar that hides until you reach for it
     store.js           persisted state + event bus
     overlay.js         modal host
     icons.js           inline SVG set
@@ -281,4 +284,4 @@ The renderer is plain ES modules served over a privileged `app://` protocol — 
 
 ## License
 
-[MIT](LICENSE) © 2026 diddy. The built-in backgrounds are original and generated in this project (`scripts/draw-sunset.js` draws the pixel-art sunset).
+[MIT](LICENSE) © 2026 diddy. The built-in scenes are original and drawn from code in this project; `node scripts/render-scenes.mjs out` renders them to PNG. The interface font is [Instrument Sans](https://github.com/Instrument/instrument-sans) (SIL Open Font License, see `assets/fonts/OFL-InstrumentSans.txt`).

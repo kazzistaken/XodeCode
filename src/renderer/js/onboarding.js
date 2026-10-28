@@ -2,6 +2,7 @@ import { el } from './util.js';
 import { icon } from './icons.js';
 import { store } from './store.js';
 import { BACKGROUNDS, setBackgroundPreset } from './backgrounds.js';
+import { sceneThumb } from './scenes/view.js';
 
 /**
  * First-run setup and the guided tour.
@@ -17,9 +18,9 @@ import { BACKGROUNDS, setBackgroundPreset } from './backgrounds.js';
 
 const TOUR = [
   {
-    target: '#commandbar',
+    target: '#console',
     title: 'Ask the Director',
-    text: 'Type what you want in plain words — "open YouTube and GitHub side by side", "start a Claude session on the login bug", "make a team of 3 to build a todo app". Simple commands run instantly; the rest go to the Director, an AI agent that runs the canvas for you.',
+    text: 'Type what you want in plain words: "open YouTube and GitHub side by side", "start a Claude session on the login bug", "make a team of 3 to build a todo app". The Director, an AI agent that runs the canvas for you, answers right above the prompt.',
   },
   {
     target: '#cb-mic',
@@ -27,25 +28,16 @@ const TOUR = [
     text: 'Click the mic (or press Ctrl+Shift+M) to dictate into whichever prompt box you were using.',
   },
   {
-    target: '#director-panel',
-    title: 'The Director',
-    text: 'Its replies appear here. Open the full conversation (Ctrl+Shift+D) to see everything it did and the teams it is running.',
-  },
-  {
     target: '#viewport',
     title: 'The canvas',
-    text: 'Every app opens here as a window — Claude sessions, terminals, browsers, notes, boards. Drag empty space to pan, scroll to zoom. Windows open full size; zoom out to see them all.',
+    text: 'Every app opens here as a window: Claude sessions, terminals, browsers, notes, boards. Drag empty space to pan, scroll to zoom. New windows open beside the last one; zoom out to see them all.',
     spot: 'center',
   },
   {
-    target: '#page-tabs',
-    title: 'Pages',
-    text: 'Each tab is its own canvas with its own project folder. Ctrl+1–9 switches between them, + adds one.',
-  },
-  {
-    target: '#menubar',
-    title: 'Menus',
-    text: 'Settings, the Map (Ctrl+Shift+O) and the Hierarchy view of your teams (Ctrl+Shift+H) live up here. Help can replay this tour.',
+    target: '#topbar',
+    bar: true,
+    title: 'Pages and menus',
+    text: 'They stay tucked away until you need them. Point at the arrow at the top of the screen, or press Alt, and this bar slides down. Each page is its own canvas; Ctrl+1–9 switches between them.',
   },
   {
     target: '#dock',
@@ -56,7 +48,7 @@ const TOUR = [
   {
     target: null,
     title: "You're all set",
-    text: 'Try asking the Director: "open a Claude session". Everything you set up here can be changed later in Settings.',
+    text: 'Agents that finish or need you show up in the top-right corner. Try asking the Director: "open a Claude session".',
   },
 ];
 
@@ -71,6 +63,7 @@ export function initOnboarding(ctx) {
   }
 
   function close() {
+    document.body.classList.remove('bar-tour');
     offResize?.();
     offResize = null;
     if (keyHandler) document.removeEventListener('keydown', keyHandler, true);
@@ -143,7 +136,7 @@ export function initOnboarding(ctx) {
     }
 
     function backgroundStep() {
-      const options = [{ id: '', label: 'Dot grid', src: '' }, ...BACKGROUNDS];
+      const options = [{ id: '', label: 'Dot grid' }, ...BACKGROUNDS];
       const grid = el('div', { class: 'onboard-bgs' });
       const paint = () => {
         const selected = store.state.settings.backgroundPreset || '';
@@ -154,12 +147,12 @@ export function initOnboarding(ctx) {
               {
                 class: `onboard-bg${option.id === selected ? ' is-on' : ''}${option.id ? '' : ' is-dots'}`,
                 type: 'button',
-                style: option.src ? { backgroundImage: `url("${option.src}")` } : {},
                 onclick: () => {
                   setBackgroundPreset(option.id || 'none');
                   paint();
                 },
               },
+              option.scene ? sceneThumb(option.scene) : null,
               el('span', { text: option.label })
             )
           )
@@ -170,7 +163,7 @@ export function initOnboarding(ctx) {
         'div',
         { class: 'onboard-step' },
         el('h2', { text: 'Pick a background' }),
-        el('p', { text: 'It fills the screen behind your windows. You can change it any time in Settings → Canvas, or use your own picture.' }),
+        el('p', { text: 'It fills the screen behind your windows. Each one is a small animated scene. Change it any time in Settings, under Appearance.' }),
         grid,
         footer(button('Back', () => show(0)), button('Next', () => show(2), true))
       );
@@ -272,6 +265,13 @@ export function initOnboarding(ctx) {
 
     function place() {
       const step = TOUR[index];
+      // The page bar is normally hidden: hold it down for its step, and
+      // measure once it has slid into place.
+      const barShown = document.body.classList.contains('bar-tour');
+      document.body.classList.toggle('bar-tour', Boolean(step.bar));
+      if (step.bar && !barShown) {
+        setTimeout(() => root === host && TOUR[index] === step && place(), 240);
+      }
       const target = step.target ? document.querySelector(step.target) : null;
       let rect = target ? target.getBoundingClientRect() : null;
       const w = window.innerWidth;

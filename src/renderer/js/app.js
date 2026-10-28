@@ -9,6 +9,9 @@ import './shapes.js';
 import { initCommandBar } from './commandbar.js';
 import { initDirectorPanel, buildDirectorSheet } from './directorpanel.js';
 import { initMenubar } from './menubar.js';
+import { initTopbar } from './topbar.js';
+import { migrateBackground } from './backgrounds.js';
+import { createSceneView } from './scenes/view.js';
 import { initQuick } from './quick.js';
 import { initVoice } from './voice.js';
 import { initNotifications } from './notifications.js';
@@ -43,10 +46,33 @@ const TOOL_KEYS = {
 
 /* ------------------------------ toasts ------------------------------ */
 
+const TOAST_LIMIT = 3;
+
+/** A one-line note in the top-right stack. Hovering keeps it open. */
 function toast(message, kind = '') {
-  const node = el('div', { class: `toast${kind ? ` is-${kind}` : ''}`, text: message });
-  $('#toasts').append(node);
-  setTimeout(() => node.remove(), 2800);
+  const list = $('#toasts');
+  const node = el(
+    'div',
+    { class: `toast${kind ? ` is-${kind}` : ''}`, role: 'status', title: message },
+    el('span', { class: 'toast-mark', 'aria-hidden': 'true' }),
+    el('span', { class: 'toast-text', text: message })
+  );
+  list.prepend(node);
+  while (list.children.length > TOAST_LIMIT) list.lastElementChild.remove();
+
+  let timer = 0;
+  const leave = () => {
+    node.classList.add('is-leaving');
+    setTimeout(() => node.remove(), 160);
+  };
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(leave, kind === 'warn' ? 5000 : 3000);
+  };
+  node.addEventListener('pointerenter', () => clearTimeout(timer));
+  node.addEventListener('pointerleave', arm);
+  node.addEventListener('click', leave);
+  arm();
 }
 
 /* ------------------------------- boot ------------------------------- */
@@ -54,11 +80,30 @@ function toast(message, kind = '') {
 store.load();
 document.documentElement.dataset.theme = store.state.theme;
 
+let sceneView = null;
+
 function applyBackground() {
   const background = store.state.settings.background;
   const fit = store.state.settings.backgroundFit || 'contain';
   const viewport = $('#viewport');
-  if (background) {
+  const scene = String(background || '').startsWith('scene:') ? background.slice(6) : '';
+  // Animated scenes draw into their own canvas behind the windows.
+  const host = viewport.querySelector('.world-bg');
+  if (scene && host) {
+    sceneView ||= createSceneView(host);
+    sceneView.show(scene);
+    sceneView.setPlaying(store.state.settings.animateScene !== false);
+  } else {
+    sceneView?.hide();
+  }
+  viewport.classList.toggle('has-scene', Boolean(scene));
+  if (scene) {
+    viewport.style.removeProperty('--canvas-image');
+    viewport.style.setProperty('--bg-base', store.state.settings.backgroundBase || '#0c0d0f');
+    viewport.classList.add('has-background');
+    delete viewport.dataset.bgFit;
+    delete viewport.dataset.bgPixel;
+  } else if (background) {
     viewport.style.setProperty('--canvas-image', `url("${background}")`);
     viewport.dataset.bgFit = fit;
     viewport.dataset.bgPixel = String(Boolean(store.state.settings.backgroundPixel));
@@ -76,7 +121,7 @@ function applyBackground() {
   }
 }
 
-applyBackground();
+migrateBackground();
 store.on('settings', applyBackground);
 
 // Glass is the default look; "Flat colors" swaps it for solid surfaces.
@@ -88,6 +133,8 @@ applyLook();
 store.on('settings', applyLook);
 
 const canvas = new Canvas({ viewport: $('#viewport'), world: $('#world') });
+// The background needs the canvas's background layer.
+applyBackground();
 canvas.onHeroAction = () => pickPageWorkspace();
 
 let notifications;
@@ -192,6 +239,7 @@ pages = initPages(ctx);
 quick = initQuick(ctx);
 ctx.tryQuick = quick.tryHandle;
 initMenubar(ctx);
+initTopbar();
 
 canvas.mountAll();
 initControl(ctx);
@@ -362,6 +410,7 @@ window.addEventListener('keydown', (event) => {
 
 // Dev handle: lets the smoke test (and devtools) drive the app directly.
 window.__xo = {
+  ctx,
   store,
   canvas,
   director,

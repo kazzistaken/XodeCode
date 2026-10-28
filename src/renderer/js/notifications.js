@@ -1,6 +1,11 @@
 import { $, el } from './util.js';
 import { icon } from './icons.js';
 import { store } from './store.js';
+import { writeToNode } from './terminal.js';
+import { setBarAttention } from './topbar.js';
+
+/** Agents shown before the rest fold into "N more". */
+const VISIBLE = 3;
 
 function extractOptions(raw) {
   const options = [];
@@ -14,137 +19,163 @@ function extractOptions(raw) {
   return options;
 }
 
+/**
+ * Agents that finished or need you, as compact rows in the top-right
+ * notification stack (toasts sit just above them; see app.js).
+ */
 export function initNotifications(ctx) {
-  const chip = $('#waiting-chip');
-  const chipLabel = $('#waiting-label');
-  const tilesEl = $('#tiles');
+  const listEl = $('#tiles');
 
   /** @type {Map<string, {kind: string, snippet: string, raw: string, at: number}>} */
   const attention = new Map();
-  let collapsed = false;
+  let expanded = false;
 
-  /* ------------------------------ tiles ------------------------------ */
+  function dismiss(id) {
+    attention.delete(id);
+    render();
+  }
 
-  function tile(node, entry) {
+  function row(node, entry) {
     const page = store.pageOfNode(node.id);
     const isAlert = entry.kind === 'needs';
     const options = isAlert ? extractOptions(entry.raw) : [];
-    const label = node.cli === 'claude' ? 'Claude Code' : 'Terminal';
 
-    const head = el(
+    const rowEl = el(
       'div',
-      { class: 'tile-head' },
-      el('span', { class: 'tile-badge', html: icon(node.cli === 'claude' ? 'claude' : 'shell') }),
+      {
+        class: `notice-agent${isAlert ? ' is-alert' : ''}`,
+        role: 'button',
+        tabindex: '0',
+        title: `Go to ${node.callSign}`,
+        onclick: () => {
+          dismiss(node.id);
+          ctx.canvas.focusAgent(node.id);
+        },
+        onkeydown: (event) => {
+          if (event.key === 'Enter') {
+            dismiss(node.id);
+            ctx.canvas.focusAgent(node.id);
+          }
+        },
+      },
+      el('span', { class: 'notice-icon', html: icon(node.cli === 'claude' ? 'claude' : 'shell') }),
       el(
         'div',
-        { class: 'tile-meta' },
-        el('div', { class: 'tile-cli', text: label }),
-        el('div', { class: 'tile-name', text: node.callSign })
+        { class: 'notice-main' },
+        el(
+          'div',
+          { class: 'notice-line' },
+          el('span', { class: 'notice-name', text: node.callSign }),
+          el('span', { class: 'notice-state', text: isAlert ? 'needs you' : 'finished' }),
+          page && page.id !== store.page.id ? el('span', { class: 'notice-where', text: page.name }) : null
+        ),
+        el('div', { class: 'notice-text', text: entry.snippet || node.title || '' })
       ),
-      el('div', { class: 'tile-where', text: page ? page.name : '' }),
       el('button', {
-        class: 'tile-x',
+        class: 'notice-x',
         type: 'button',
         title: 'Dismiss',
+        'aria-label': `Dismiss ${node.callSign}`,
         html: icon('x'),
         onclick: (event) => {
           event.stopPropagation();
-          attention.delete(node.id);
-          render();
+          dismiss(node.id);
         },
       })
     );
 
-    const tileEl = el(
-      'div',
-      {
-        class: `tile${isAlert ? ' is-alert' : ''}`,
-        onclick: () => {
-          attention.delete(node.id);
-          ctx.canvas.focusAgent(node.id);
-          render();
-        },
-      },
-      head,
-      el('div', { class: 'tile-sep' }),
-      el('div', { class: 'tile-job', text: node.title || 'Session' }),
-      el(
-        'div',
-        { class: `tile-body${isAlert ? ' is-alert' : ''}` },
-        el('span', { class: 'tile-bullet' }),
-        el('span', { text: entry.snippet })
-      )
-    );
-
+    // A question with numbered answers: answer it from here.
     if (options.length) {
-      tileEl.append(
+      rowEl.append(
         el(
           'div',
-          { class: 'tile-options' },
-          ...options.map((option) => el('span', { text: option }))
+          { class: 'notice-options' },
+          ...options.map((option, index) =>
+            el('button', {
+              class: 'notice-option',
+              type: 'button',
+              title: option,
+              text: option,
+              onclick: (event) => {
+                event.stopPropagation();
+                if (writeToNode(node.id, String(index + 1))) dismiss(node.id);
+              },
+            })
+          )
         )
       );
     }
-    return tileEl;
+    return rowEl;
   }
 
-  function renderTiles() {
+  function waiting() {
+    return Array.from(attention.entries())
+      .map(([id, entry]) => ({ found: store.findNode(id), entry }))
+      .filter((item) => item.found)
+      // Questions first, then the newest.
+      .sort((a, b) => (b.entry.kind === 'needs') - (a.entry.kind === 'needs') || b.entry.at - a.entry.at);
+  }
+
+  function render() {
     for (const id of Array.from(attention.keys())) {
       if (!store.findNode(id)) attention.delete(id);
     }
 
-    tilesEl.replaceChildren();
-    const entries = Array.from(attention.entries());
-    tilesEl.classList.toggle('is-collapsed', collapsed);
+    const entries = waiting();
+    const shown = expanded ? entries : entries.slice(0, VISIBLE);
+    listEl.replaceChildren(...shown.map(({ found, entry }) => row(found.node, entry)));
 
-    if (entries.length) {
-      if (entries.length > 1) {
-        tilesEl.append(
+    if (entries.length > VISIBLE) {
+      listEl.append(
+        el(
+          'div',
+          { class: 'notice-foot' },
           el('button', {
-            class: 'tiles-clear',
+            class: 'notice-more',
+            type: 'button',
+            text: expanded ? 'Show fewer' : `${entries.length - VISIBLE} more waiting`,
+            onclick: () => {
+              expanded = !expanded;
+              render();
+            },
+          }),
+          el('button', {
+            class: 'notice-more',
             type: 'button',
             text: 'Clear all',
             onclick: () => {
               attention.clear();
+              expanded = false;
               render();
             },
           })
-        );
-      }
-      for (const [id, entry] of entries) {
-        const found = store.findNode(id);
-        if (found) tilesEl.append(tile(found.node, entry));
-      }
+        )
+      );
     }
 
-    const alerting = entries.some(([, entry]) => entry.kind === 'needs');
-    const total = entries.length;
-    chip.hidden = total === 0;
-    chip.classList.toggle('has-alert', alerting);
-    if (total === 1) {
-      const found = store.findNode(entries[0][0]);
-      chipLabel.textContent = `${found ? found.node.callSign : 'An agent'} is waiting`;
-    } else {
-      chipLabel.textContent = `${total} agents waiting`;
-    }
+    markTabs(entries);
   }
 
-  function render() {
-    renderTiles();
+  /** Mark pages (and the bar handle) that have someone waiting. */
+  function markTabs(entries = waiting()) {
+    const waitingPages = new Set(entries.map(({ found }) => store.pageOfNode(found.node.id)?.id));
+    for (const tab of document.querySelectorAll('.tab[data-page-id]')) {
+      tab.classList.toggle('has-attention', waitingPages.has(tab.dataset.pageId));
+    }
+    setBarAttention(entries.some(({ found }) => store.pageOfNode(found.node.id)?.id !== store.page.id));
   }
 
   /* ------------------------------ events ----------------------------- */
 
   store.on('attention', ({ id, kind, snippet, raw }) => {
     attention.set(id, { kind, snippet, raw, at: Date.now() });
-    collapsed = false;
     render();
 
     if (!store.state.settings.agentNotifications) return;
     if (document.hasFocus()) return;
     const found = store.findNode(id);
     if (!found || !('Notification' in window)) return;
-    const title = `${found.node.callSign} · ${kind === 'needs' ? 'needs you' : 'finished'}`;
+    const title = `${found.node.callSign} ${kind === 'needs' ? 'needs you' : 'finished'}`;
     try {
       if (Notification.permission === 'granted') {
         const notification = new Notification(title, { body: snippet });
@@ -166,11 +197,8 @@ export function initNotifications(ctx) {
   store.on('status', () => render());
   store.on('nodes', () => render());
   store.on('page', () => render());
-
-  chip.addEventListener('click', () => {
-    collapsed = !collapsed;
-    renderTiles();
-  });
+  // The page bar rebuilds its tabs; mark them again.
+  store.on('tabs', () => markTabs());
 
   render();
 

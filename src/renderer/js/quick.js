@@ -2,7 +2,7 @@ import { store } from './store.js';
 import { spawnShell, spawnClaude } from './terminal.js';
 import { openBrowser, looksLikeSite, KNOWN_SITES } from './browser.js';
 import { openMusic } from './music.js';
-import { setBackgroundPreset } from './backgrounds.js';
+import { setBackgroundPreset, findBackground } from './backgrounds.js';
 
 /**
  * Instant path for simple canvas actions.
@@ -23,7 +23,6 @@ const NUMBER_WORDS = {
 };
 const COUNT = '(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)';
 
-const THEME_ALIASES = { graphite: 'nightglass', slate: 'cupola', ash: 'ember' };
 
 // If any of these appear, the message is real work, not a one-liner.
 const COMPLEX_HINTS = [
@@ -294,36 +293,12 @@ export function initQuick(ctx) {
     }
 
     // Background
-    match = q.match(
-      /^(?:set|change|switch|use|make)\s+(?:the\s+)?(?:background|wallpaper)(?:\s+(?:to|as))?\s+(?:the\s+)?(sunset|sunset lake|aurora|northern lights|night sky|quiet nebula|nebula|space|deep sea|deepsea|ocean|underwater|dusk forest|dusk-forest|forest|midnight grid|midnight-grid|midnight|dots|dot grid|none|nothing|default)$/
-    );
-    if (match) {
+    match = q.match(/^(?:set|change|switch|use|make)\s+(?:the\s+)?(?:background|wallpaper|scene)(?:\s+(?:to|as))?\s+(?:the\s+)?([a-z -]{2,24})$/);
+    if (match && (findBackground(match[1]) || /^(dots|dot grid|none|nothing|default)$/.test(match[1]))) {
       const word = match[1];
-      const id = word.startsWith('sunset')
-        ? 'sunset'
-        : /nebula|space/.test(word)
-          ? 'nebula'
-          : /sea|ocean|underwater/.test(word)
-            ? 'deepsea'
-            : /forest/.test(word)
-              ? 'dusk-forest'
-              : /midnight/.test(word)
-                ? 'midnight-grid'
-                : /aurora|northern|night/.test(word)
-                  ? 'aurora'
-                  : 'none';
       return () => {
-        const preset = setBackgroundPreset(id);
+        const preset = setBackgroundPreset(findBackground(word) ? word : 'none');
         return preset ? `Background: ${preset.label}` : 'Background: dot grid';
-      };
-    }
-
-    // Theme
-    match = q.match(/^(?:switch|set|use|change)\s+(?:the\s+)?theme\s+to\s+(graphite|slate|ash)$/);
-    if (match) {
-      return () => {
-        store.setTheme(THEME_ALIASES[match[1]]);
-        return `Theme is ${match[1]}`;
       };
     }
 

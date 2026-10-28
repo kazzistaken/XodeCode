@@ -150,6 +150,10 @@ async function runStressTest(mainWindow) {
     s.setWorkspace(${JSON.stringify(outDir)});
     s.setSetting('onboarded', true); // skip the first-run setup in test profiles
     if (${JSON.stringify(Boolean(process.env.XODECODE_STRESS_FLAT))}) s.setSetting('flatUi', true);
+    // XODECODE_STRESS_BG: "none" (dot grid) or "still" (scene, not animated).
+    const bg = ${JSON.stringify(process.env.XODECODE_STRESS_BG || '')};
+    if (bg === 'none') window.__xo.tryQuick('set background to dots');
+    if (bg === 'still') s.setSetting('animateScene', false);
     document.querySelector('.onboard')?.remove();
     return true;
   })()`);

@@ -7,7 +7,8 @@ import { teamTree } from './hierarchy.js';
 /**
  * The Director, shown as chat.
  *
- * - A compact panel in the bottom-right corner with the last few exchanges.
+ * - A panel right above the prompt with the last few exchanges; it folds to
+ *   one line (the latest reply) when the Director is quiet.
  * - A full transcript sheet (Ctrl+Shift+D) that looks like Claude Desktop's
  *   conversation view, with its own composer.
  *
@@ -110,13 +111,19 @@ export function initDirectorPanel(ctx) {
   const statusEl = $('#director-panel-status');
   const body = $('#director-panel-body');
   const logBtn = $('#director-panel-log');
+  const peek = $('#director-panel-peek');
 
   let lastCount = -1;
   let lastStatus = '';
   let collapseTimer = null;
+  // Opened from the ☰ button: stays up while the cursor is over the panel or
+  // the prompt bar, and folds 1.5 seconds after it leaves.
+  let pinned = false;
+  let pinTimer = null;
+  const console_ = $('#console') || panel;
 
-  // Fold down to just the header a few seconds after the Director goes quiet,
-  // so the panel never sits on top of tiled windows. Hover opens it again.
+  // The chat opens when a command is run and while the Director is working,
+  // and folds down to just the header 1 second after. Hover doesn't open it.
   function scheduleCollapse(status) {
     clearTimeout(collapseTimer);
     if (status === 'working' || status === 'starting') {
@@ -124,14 +131,23 @@ export function initDirectorPanel(ctx) {
       return;
     }
     collapseTimer = setTimeout(() => {
-      if (!panel.matches(':hover')) panel.classList.add('is-collapsed');
-    }, 7000);
+      if (!pinned) panel.classList.add('is-collapsed');
+    }, 1000);
   }
-  panel.addEventListener('pointerenter', () => {
-    clearTimeout(collapseTimer);
-    panel.classList.remove('is-collapsed');
+
+  function unpinLater() {
+    clearTimeout(pinTimer);
+    pinTimer = setTimeout(() => {
+      pinned = false;
+      panel.classList.remove('is-pinned');
+      scheduleCollapse(ctx.director.status().status);
+    }, 1500);
+  }
+
+  console_.addEventListener('pointerenter', () => clearTimeout(pinTimer));
+  console_.addEventListener('pointerleave', () => {
+    if (pinned) unpinLater();
   });
-  panel.addEventListener('pointerleave', () => scheduleCollapse(ctx.director.status().status));
 
   function setStatus(status) {
     const next = status || 'idle';
@@ -145,11 +161,14 @@ export function initDirectorPanel(ctx) {
     const recent = state.transcript.slice(-8);
     const working = awaitingReply(state.transcript, state.status);
     if (state.transcript.length === lastCount && state.status === lastStatus) return;
+    // A new command (including quick ones the Director never sees) opens it.
+    if (lastCount >= 0 && state.transcript.length > lastCount) panel.classList.remove('is-collapsed');
     lastCount = state.transcript.length;
     lastStatus = state.status;
-    panel.classList.remove('is-collapsed');
-    scheduleCollapse(state.status);
+    scheduleCollapse(working ? 'working' : state.status);
     panel.classList.toggle('is-empty', !recent.length && !working);
+    const lastReply = [...recent].reverse().find((entry) => entry.role === 'assistant');
+    if (peek) peek.textContent = lastReply ? lastReply.text.replace(/[#*`_>]+/g, '').replace(/\s+/g, ' ').trim() : '';
     if (!recent.length && !working) {
       body.replaceChildren(
         el('div', { class: 'dx-empty', text: 'Ask the Director to open, close or arrange apps, or to start Claude sessions.' })
@@ -166,7 +185,14 @@ export function initDirectorPanel(ctx) {
   });
 
   store.on('settings', () => setStatus(ctx.director.status().status));
-  logBtn?.addEventListener('click', () => panel.dispatchEvent(new CustomEvent('open-log')));
+  logBtn?.addEventListener('click', () => {
+    pinned = true;
+    panel.classList.add('is-pinned');
+    clearTimeout(collapseTimer);
+    clearTimeout(pinTimer);
+    panel.classList.remove('is-collapsed');
+    if (!console_.matches(':hover')) unpinLater();
+  });
 
   return { setStatus, el: panel };
 }
@@ -356,7 +382,7 @@ export function buildDirectorSheet(ctx, close) {
           el('span', { class: 'dx-hello-mark', html: icon('claude') }),
           el('h2', { text: 'What should we set up?' }),
           el('p', {
-            text: 'Open, close and arrange apps, or start Claude sessions — one at a time or as a jointed team.',
+            text: 'Open, close and arrange apps, or start Claude sessions, one at a time or as a team.',
           })
         )
       );

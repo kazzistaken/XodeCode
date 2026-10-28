@@ -1,5 +1,6 @@
 import { $, el, MOD, SHIFT } from './util.js';
 import { store } from './store.js';
+import { icon } from './icons.js';
 
 /**
  * Classic menu bar for the app-level commands we took out of the prompt
@@ -42,7 +43,7 @@ export function initMenubar(ctx) {
             item.action?.();
           },
         },
-        el('span', { class: 'menu-check', text: item.checked ? '✓' : '' }),
+        el('span', { class: 'menu-check', html: item.checked ? icon('check') : '' }),
         el('span', { class: 'menu-text', text: item.label }),
         item.hint ? el('span', { class: 'menu-hint', text: item.hint }) : null
       );
@@ -120,9 +121,11 @@ export function initMenubar(ctx) {
         },
         { label: 'Reset zoom', hint: `${MOD} 0`, action: () => ctx.canvas.resetZoom() },
         { divider: true },
-        { label: 'Theme: Graphite', checked: store.state.theme === 'nightglass', action: () => store.setTheme('nightglass') },
-        { label: 'Theme: Slate', checked: store.state.theme === 'cupola', action: () => store.setTheme('cupola') },
-        { label: 'Theme: Ash', checked: store.state.theme === 'ember', action: () => store.setTheme('ember') },
+        {
+          label: 'Always show the page bar',
+          checked: !!store.state.settings.pinTopbar,
+          action: () => store.setSetting('pinTopbar', !store.state.settings.pinTopbar),
+        },
       ],
     },
     {

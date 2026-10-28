@@ -16,13 +16,23 @@
       <div id="world"></div>
     </div>
 
-    <!-- agent notification tiles -->
-    <div id="tiles" class="tiles"></div>
+    <!-- notifications: short notes, then agents that need you (top-right) -->
+    <div class="notices" aria-live="polite">
+      <div id="toasts" class="toasts"></div>
+      <div id="tiles" class="notice-agents"></div>
+    </div>
 
-    <!-- title bar -->
+    <!-- page bar: hidden until you hover the top edge or the handle -->
+    <div class="bar-hotzone" id="bar-hotzone" aria-hidden="true"></div>
+    <button class="bar-handle" id="bar-handle" type="button" title="Show pages and menus (Alt)" aria-label="Show pages and menus">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 9.5 12 15l5.5-5.5" /></svg>
+    </button>
     <header id="topbar">
+      <span class="bar-mark" aria-hidden="true">XodeCode</span>
       <nav id="menubar" class="menubar" role="menubar" aria-label="Main menu"></nav>
+      <span class="bar-sep" aria-hidden="true"></span>
       <div class="page-tabs" id="page-tabs" role="tablist" aria-label="Pages"></div>
+      <span class="bar-sep" aria-hidden="true"></span>
       <div class="win-controls">
         <button class="win-btn" id="win-min" type="button" title="Minimize" aria-label="Minimize">
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8" /></svg>
@@ -39,60 +49,57 @@
     <!-- parked apps (clearing the canvas sends windows here) -->
     <nav id="dock" class="dock is-empty" aria-label="Parked apps"></nav>
 
-    <aside id="director-panel" class="director-panel">
-      <header class="director-panel-head">
-        <span class="director-panel-dot" id="director-panel-dot" data-status="starting" aria-hidden="true"></span>
-        <span class="director-panel-title">Director</span>
-        <span class="director-panel-status" id="director-panel-status">starting…</span>
-        <button
-          class="director-panel-btn"
-          id="director-panel-log"
-          type="button"
-          title="Open the Director log"
-          aria-label="Open the Director log"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4.5 6.5h15M4.5 12h10M4.5 17.5h6" />
-          </svg>
-        </button>
-      </header>
-      <div class="director-panel-body" id="director-panel-body"></div>
-    </aside>
+    <!-- the Director: its replies sit right above the prompt -->
+    <section class="console" id="console">
+      <aside id="director-panel" class="director-panel">
+        <header class="director-panel-head">
+          <span class="director-panel-dot" id="director-panel-dot" data-status="starting" aria-hidden="true"></span>
+          <span class="director-panel-title">Director</span>
+          <span class="director-panel-status" id="director-panel-status">starting…</span>
+          <span class="director-panel-peek" id="director-panel-peek"></span>
+          <button
+            class="director-panel-btn"
+            id="director-panel-log"
+            type="button"
+            title="Show the Director chat"
+            aria-label="Show the Director chat"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.5 6.5h15M4.5 12h10M4.5 17.5h6" />
+            </svg>
+          </button>
+        </header>
+        <div class="director-panel-body" id="director-panel-body"></div>
+      </aside>
 
-    <!-- command bar -->
-    <div id="commandbar" class="commandbar">
-      <div class="cb-row">
-        <button
-          class="cb-mic"
-          id="cb-mic"
-          type="button"
-          title="Dictate"
-          aria-label="Dictate"
-          aria-pressed="false"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="9" y="3" width="6" height="11" rx="3" />
-            <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
-          </svg>
-        </button>
-        <textarea
-          id="cb-input"
-          rows="1"
-          placeholder="Ask the Director…"
-          spellcheck="false"
-          aria-label="Ask the Director"
-        ></textarea>
+      <!-- command bar -->
+      <div id="commandbar" class="commandbar">
+        <div class="cb-row">
+          <button
+            class="cb-mic"
+            id="cb-mic"
+            type="button"
+            title="Dictate"
+            aria-label="Dictate"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
+            </svg>
+          </button>
+          <textarea
+            id="cb-input"
+            rows="1"
+            placeholder="Ask the Director…"
+            spellcheck="false"
+            aria-label="Ask the Director"
+          ></textarea>
+        </div>
       </div>
-    </div>
-
-    <button class="waiting-chip" id="waiting-chip" type="button" hidden>
-      <span class="waiting-dot" aria-hidden="true"></span>
-      <span id="waiting-label">0 agents waiting</span>
-      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-    </button>
+    </section>
 
     <div id="overlay" class="overlay" hidden></div>
-    <div id="toasts" class="toasts"></div>
 
     <script type="module" src="./js/app.js"></script>
   </body>

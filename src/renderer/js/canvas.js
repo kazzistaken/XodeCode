@@ -18,7 +18,7 @@ const FLOW_GAP = 24;
 const FLOW_ROW_SCREENS = 1.6;
 export const MIN_W = 300;
 export const MIN_H = 170;
-export const MIN_ZOOM = 0.5; // zoomed out to 2x the normal view at most
+export const MIN_ZOOM = 1 / 3; // zoomed out to 3x the normal view at most
 export const MAX_ZOOM = 2.4;
 const SHAPE_MIN = 16;
 
@@ -559,20 +559,6 @@ export class Canvas {
   }
 
   /**
-   * Where the first window sits. Fixed once the page has windows, so panning
-   * never shifts anything; it starts again where you are looking when a page
-   * is emptied.
-   */
-  _flowAnchor(page, nodes) {
-    if (!this._anchors) this._anchors = new Map();
-    if (!nodes.length || !this._anchors.has(page.id)) {
-      const frame = this.layoutFrame();
-      this._anchors.set(page.id, { x: frame.x + LAYOUT.margin, y: frame.y + LAYOUT.insets.top + LAYOUT.margin });
-    }
-    return this._anchors.get(page.id);
-  }
-
-  /**
    * Plan a page. Side-by-side mode: every window keeps its own size and is
    * placed right after the previous one, in the order they were opened; when a
    * row reaches about 1.6 screens wide the next window starts a new row below.
@@ -591,25 +577,37 @@ export class Canvas {
       });
       return nodes.map((node, index) => ({ node, rect: rects[index] })).filter((item) => item.rect);
     }
-    const anchor = this._flowAnchor(page, nodes);
     // Rows run a little wider than the screen, so two or three windows sit
     // side by side and the whole arrangement stays landscape when zoomed out.
-    const rowLimit = this.layoutFrame().w * FLOW_ROW_SCREENS;
-    const plan = [];
-    let x = anchor.x;
-    let y = anchor.y;
-    let rowHeight = 0;
+    const frame = this.layoutFrame();
+    const rowLimit = frame.w * FLOW_ROW_SCREENS;
+    const rows = [];
+    let row = null;
     for (const node of nodes) {
       const w = Math.round(Math.min(LAYOUT.maxW, Math.max(MIN_W, node.w || 560)));
       const h = Math.round(Math.min(LAYOUT.maxH, Math.max(MIN_H, node.h || 360)));
-      if (x > anchor.x && x + w > anchor.x + rowLimit) {
-        x = anchor.x;
-        y += rowHeight + FLOW_GAP;
-        rowHeight = 0;
+      if (!row || (row.items.length && row.w + FLOW_GAP + w > rowLimit)) {
+        row = { items: [], w: 0, h: 0 };
+        rows.push(row);
       }
-      plan.push({ node, rect: { x, y, w, h } });
-      x += w + FLOW_GAP;
-      rowHeight = Math.max(rowHeight, h);
+      row.w += (row.items.length ? FLOW_GAP : 0) + w;
+      row.h = Math.max(row.h, h);
+      row.items.push({ node, w, h });
+    }
+    // The whole arrangement sits in the middle of the canvas, each row centred.
+    const { top, bottom } = LAYOUT.insets;
+    const midX = frame.x + frame.w / 2;
+    const midY = frame.y + top + (frame.h - top - bottom) / 2;
+    const totalH = rows.reduce((sum, r) => sum + r.h, 0) + FLOW_GAP * Math.max(0, rows.length - 1);
+    const plan = [];
+    let y = Math.round(midY - totalH / 2);
+    for (const r of rows) {
+      let x = Math.round(midX - r.w / 2);
+      for (const item of r.items) {
+        plan.push({ node: item.node, rect: { x, y, w: item.w, h: item.h } });
+        x += item.w + FLOW_GAP;
+      }
+      y += r.h + FLOW_GAP;
     }
     return plan;
   }
@@ -742,21 +740,14 @@ export class Canvas {
 
   /**
    * The frame windows tile into: one screen's worth of canvas *at 100% zoom*,
-   * centred on whatever is in view. Zoom level never changes how big windows
-   * are in the world — zoomed out they simply look smaller — so nothing is
-   * created oversized and then resolution-stretched to fit.
+   * in the middle of the canvas (the starting view). Zoom level never changes
+   * how big windows are in the world — zoomed out they simply look smaller —
+   * so nothing is created oversized and then resolution-stretched to fit.
    */
   layoutFrame() {
-    const visible = this.visibleWorldRect();
-    const w = this.viewportEl.clientWidth;
-    const h = this.viewportEl.clientHeight;
-    return {
-      x: visible.x + visible.w / 2 - w / 2,
-      y: visible.y + visible.h / 2 - h / 2,
-      w,
-      h,
-    };
+    return { x: 0, y: 0, w: this.viewportEl.clientWidth, h: this.viewportEl.clientHeight };
   }
+
 
   createNode(partial, options = {}) {
     const { focus = true, silent = false, autoPosition = true } = options;
@@ -1021,8 +1012,45 @@ export class Canvas {
 
   /* ---------------------------- transform --------------------------- */
 
+  /**
+   * The canvas is as big as the view at full zoom-out (MIN_ZOOM), centred on
+   * the starting view. It grows to take in any window that sits outside it,
+   * so nothing is ever out of reach.
+   */
+  canvasBounds() {
+    const cw = this.viewportEl.clientWidth;
+    const ch = this.viewportEl.clientHeight;
+    const w = cw / MIN_ZOOM;
+    const h = ch / MIN_ZOOM;
+    let x0 = cw / 2 - w / 2;
+    let y0 = ch / 2 - h / 2;
+    let x1 = x0 + w;
+    let y1 = y0 + h;
+    for (const n of store.page.nodes) {
+      x0 = Math.min(x0, n.x);
+      y0 = Math.min(y0, n.y);
+      x1 = Math.max(x1, n.x + n.w);
+      y1 = Math.max(y1, n.y + n.h);
+    }
+    return { x0, y0, x1, y1 };
+  }
+
+  /** Keep the view inside the canvas; at full zoom-out it can't pan at all. */
+  _clampViewport(vp) {
+    const cw = this.viewportEl.clientWidth;
+    const ch = this.viewportEl.clientHeight;
+    if (!cw || !ch) return;
+    const b = this.canvasBounds();
+    const s = vp.scale;
+    const fit = (pos, size, lo, hi) =>
+      size / s >= hi - lo ? size / 2 - ((lo + hi) / 2) * s : clamp(pos, size - hi * s, -lo * s);
+    vp.x = fit(vp.x, cw, b.x0, b.x1);
+    vp.y = fit(vp.y, ch, b.y0, b.y1);
+  }
+
   applyViewport() {
     const vp = store.page.viewport;
+    this._clampViewport(vp);
     this.worldEl.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.scale})`;
     // Cheap bitmap scaling while moving; a sharp repaint once it settles.
     this.viewportEl.classList.add('is-moving');
@@ -1130,6 +1158,7 @@ export class Canvas {
       y: Number.isFinite(target.y) ? target.y : vp.y,
       scale: Number.isFinite(target.scale) ? clamp(target.scale, MIN_ZOOM, MAX_ZOOM) : vp.scale,
     };
+    this._clampViewport(to);
     if (prefersReducedMotion() || duration <= 0) {
       Object.assign(vp, to);
       this.applyViewport();
