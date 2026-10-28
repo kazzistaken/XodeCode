@@ -12,6 +12,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
+    "icon": "node scripts/make-icon.mjs",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-shortcut.ps1",
     "test:sessions": "node scripts/test-sessions.js"
   },

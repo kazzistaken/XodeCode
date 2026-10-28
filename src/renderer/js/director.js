@@ -172,7 +172,10 @@ export function sendToDirector(text, { from } = {}) {
       } catch (error) {
         console.warn('[director] context failed', error);
       }
-      return window.api.director.send(context ? `${context}\n\n${clean}` : clean);
+      // The workspace tells the shared-context log where this turn belongs.
+      return window.api.director.send(context ? `${context}\n\n${clean}` : clean, {
+        workspace: store.page?.workspace || store.state.workspace || '',
+      });
     })
     .then((result) => {
       if (result?.error) {

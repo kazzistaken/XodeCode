@@ -28,7 +28,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 9.5 12 15l5.5-5.5" /></svg>
     </button>
     <header id="topbar">
-      <span class="bar-mark" aria-hidden="true">XodeCode</span>
+      <span class="bar-mark" aria-hidden="true">
+        <svg viewBox="0 0 11 11" fill="currentColor" shape-rendering="crispEdges"><path fill-rule="evenodd" d="M0 0h2v2H0zM9 0h2v2H9zM0 9h2v2H0zM9 9h2v2H9zM4 4h3v3H4zM5 5h1v1H5z" /><path opacity=".55" d="M2 2h1v1H2zM3 3h1v1H3zM8 2h1v1H8zM7 3h1v1H7zM3 7h1v1H3zM2 8h1v1H2zM7 7h1v1H7zM8 8h1v1H8z" /></svg>
+        XodeCode
+      </span>
       <nav id="menubar" class="menubar" role="menubar" aria-label="Main menu"></nav>
       <span class="bar-sep" aria-hidden="true"></span>
       <div class="page-tabs" id="page-tabs" role="tablist" aria-label="Pages"></div>
@@ -52,23 +55,6 @@
     <!-- the Director: its replies sit right above the prompt -->
     <section class="console" id="console">
       <aside id="director-panel" class="director-panel">
-        <header class="director-panel-head">
-          <span class="director-panel-dot" id="director-panel-dot" data-status="starting" aria-hidden="true"></span>
-          <span class="director-panel-title">Director</span>
-          <span class="director-panel-status" id="director-panel-status">starting…</span>
-          <span class="director-panel-peek" id="director-panel-peek"></span>
-          <button
-            class="director-panel-btn"
-            id="director-panel-log"
-            type="button"
-            title="Show the Director chat"
-            aria-label="Show the Director chat"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4.5 6.5h15M4.5 12h10M4.5 17.5h6" />
-            </svg>
-          </button>
-        </header>
         <div class="director-panel-body" id="director-panel-body"></div>
       </aside>
 
@@ -95,6 +81,17 @@
             spellcheck="false"
             aria-label="Ask the Director"
           ></textarea>
+          <button
+            class="director-panel-btn"
+            id="director-panel-log"
+            type="button"
+            title="Show the Director chat"
+            aria-label="Show the Director chat"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.5 6.5h15M4.5 12h10M4.5 17.5h6" />
+            </svg>
+          </button>
         </div>
       </div>
     </section>

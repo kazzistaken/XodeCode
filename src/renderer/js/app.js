@@ -5,6 +5,7 @@ import { spawnClaude, spawnShell, writeToNode } from './terminal.js';
 import { openBrowser } from './browser.js';
 import { openMusic } from './music.js';
 import { openBoard } from './board.js';
+import { openContextLog } from './contextlog.js';
 import './shapes.js';
 import { initCommandBar } from './commandbar.js';
 import { initDirectorPanel, buildDirectorSheet } from './directorpanel.js';
@@ -16,6 +17,7 @@ import { initQuick } from './quick.js';
 import { initVoice } from './voice.js';
 import { initNotifications } from './notifications.js';
 import { initDock } from './dock.js';
+import { initFollow } from './follow.js';
 import { initOnboarding } from './onboarding.js';
 import { initHierarchy } from './hierarchy.js';
 import { buildHierarchySheet } from './hierarchyview.js';
@@ -219,6 +221,7 @@ const ctx = {
   openBrowser: (url) => openBrowser(canvas, url),
   openMusic: (options) => openMusic(canvas, options),
   openBoard: (options) => openBoard(canvas, options),
+  openContextLog: () => openContextLog(canvas),
   focusPrompt: () => commandBar.focus(),
   pickWorkspace,
   pickPageWorkspace,
@@ -233,6 +236,7 @@ voice = initVoice(ctx);
 notifications = initNotifications(ctx);
 directorPanel = initDirectorPanel(ctx);
 initDock(ctx);
+initFollow(ctx);
 directorPanel.el.addEventListener('open-log', () => openDirectorLog());
 settings = initSettings(ctx);
 pages = initPages(ctx);
@@ -421,6 +425,7 @@ window.__xo = {
   openBrowser: (url) => openBrowser(canvas, url),
   openMusic: (options) => openMusic(canvas, options),
   openBoard: (options) => openBoard(canvas, options),
+  openContextLog: () => openContextLog(canvas),
   tryQuick: (text) => quick.tryHandle(text),
   canvasSummary: () => canvasSummary(ctx),
   openDirectorLog: () => openDirectorLog(),

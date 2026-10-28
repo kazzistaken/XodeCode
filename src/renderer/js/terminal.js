@@ -140,8 +140,8 @@ function createTerminalView(meta, canvas) {
   ensureWired();
 
   const chrome = buildNodeChrome(meta, {
-    brand: 'shell',
-    iconName: 'shell',
+    brand: meta.cli === 'claude' ? 'claude' : 'shell',
+    iconName: meta.cli === 'claude' ? 'claude' : 'shell',
     actions: [
       { icon: 'x', title: 'Close terminal', danger: true, onClick: () => canvas.closeNode(meta.id) },
     ],
@@ -578,7 +578,7 @@ export function spawnTerminal(canvas, options = {}) {
   const callSign = pickUnused(CALL_SIGNS, used);
   const workTitle =
     title ||
-    (prompt ? truncate(prompt, 46) : cli === 'claude' ? 'Waiting on the brief' : 'Shell session');
+    (prompt ? truncate(prompt, 46) : cli === 'claude' ? 'New session' : 'Shell session');
 
   const guiChat = cli === 'claude';
 

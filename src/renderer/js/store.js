@@ -28,6 +28,8 @@ function defaults() {
     sharedContext: '',
     settings: {
       agentNotifications: true,
+      // Glide the camera to agents as they work, then back (follow.js).
+      followMode: false,
       snapToGrid: false,
       sounds: true,
       voice: true,
@@ -44,8 +46,9 @@ function defaults() {
       backgroundFit: 'contain',
       animateScene: true,
       pinTopbar: false,
-      // Tiled windows are screen-sized; zoom out to see them all.
-      fullSizeWindows: true,
+      // false: windows are tiled to fit the screen. true: each keeps its own
+      // size in rows past the screen edge (zoom out to see them all).
+      flowLayout: false,
       agentFullPermissions: true,
       budgetUsd: 0,
       showTitles: true,

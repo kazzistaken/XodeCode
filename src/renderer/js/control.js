@@ -3,6 +3,7 @@ import { spawnTerminal, writeToNode, hasSession } from './terminal.js';
 import { openBrowser } from './browser.js';
 import { openMusic } from './music.js';
 import { openBoard } from './board.js';
+import { openContextLog } from './contextlog.js';
 import { truncate, uid } from './util.js';
 import { TILEABLE } from './layout.js';
 import { setBackgroundPreset } from './backgrounds.js';
@@ -650,6 +651,9 @@ async function handle(ctx, method, params) {
       return nodeInfo(node);
     }
 
+    case 'contextlog.open':
+      return nodeInfo(openContextLog(ctx.canvas));
+
     case 'board.list': {
       const node = boardNode();
       if (!node) return [];
@@ -925,6 +929,8 @@ async function runOp(ctx, action) {
       return handle(ctx, 'music.open', action);
     case 'board':
       return handle(ctx, 'board.open', action);
+    case 'contextlog':
+      return handle(ctx, 'contextlog.open', action);
     case 'board_add':
       return handle(ctx, 'board.add', action);
     case 'board_move':

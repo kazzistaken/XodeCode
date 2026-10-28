@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   director: {
     start: (options) => ipcRenderer.invoke('director:start', options),
-    send: (text) => ipcRenderer.invoke('director:send', { text }),
+    send: (text, options = {}) => ipcRenderer.invoke('director:send', { ...options, text }),
     stop: () => ipcRenderer.invoke('director:stop'),
     onEvent: (callback) => subscribe('director:event', callback),
   },
@@ -60,6 +60,11 @@ contextBridge.exposeInMainWorld('api', {
   context: {
     read: () => ipcRenderer.invoke('context:read'),
     sync: (content) => ipcRenderer.invoke('context:sync', content),
+  },
+  contextLog: {
+    list: (options) => ipcRenderer.invoke('context-log:list', options),
+    paths: (options) => ipcRenderer.invoke('context-log:paths', options),
+    onUpdated: (callback) => subscribe('context-log:updated', callback),
   },
   joint: {
     create: (payload) => ipcRenderer.invoke('joint:create', payload),

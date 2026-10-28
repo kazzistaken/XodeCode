@@ -19,6 +19,7 @@ const { spawn, execFile } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const pty = require('node-pty');
 const { createControlServer } = require('./control');
+const { createContextLog } = require('./contextlog');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const SCHEME = 'app';
@@ -227,6 +228,7 @@ Claude Code sessions
 - {op:"joint_brief", joint, text, append?}
 - {op:"team_budget", joint, usd}  cap a team's spend (0 = no cap) · {op:"board", joint}  open that
   team's live task board · {op:"open", target:"hierarchy"}  the org-chart view.
+- {op:"contextlog"}  open the shared context log: every finished agent turn (prompt, output, files), live.
 - {op:"lead", agent} make it its team's lead (old lead becomes a worker) · {op:"demote", agent}
   hand the lead role to the next member · {op:"move_team", agent, joint} move into a team as a
   worker; joint:"none" takes it out of every team.
@@ -343,6 +345,12 @@ const control = createControlServer({
       mainWindow.webContents.send(channel, payload);
     }
   },
+});
+
+// One entry per finished agent turn, in <workspace>/.xode (see contextlog.js).
+const contextLog = createContextLog({
+  send: (channel, payload) => send(channel, payload),
+  log: (message) => console.error(message),
 });
 
 function serveProjectFile(request) {
@@ -907,6 +915,7 @@ function pipeLines(stream, onLine) {
 
 let directorProc = null;
 let directorOptions = {};
+let directorSessionId = '';
 
 function directorEvent(event) {
   send('director:event', event);
@@ -975,6 +984,8 @@ function writeAgentMcpConfig(nodeId, team = false) {
 function stopDirector() {
   const proc = directorProc;
   directorProc = null;
+  // Prompts it had not answered yet are logged as interrupted.
+  contextLog.interrupt('director');
   if (!proc) return;
   try {
     proc.stdin.end();
@@ -1030,9 +1041,20 @@ function startDirector(options = {}) {
   }
 
   directorProc = proc;
+  directorSessionId = '';
   let stderr = '';
   pipeLines(proc.stdout, (line) => {
-    if (directorProc === proc) parseClaudeLine(line, directorEvent);
+    if (directorProc !== proc) return;
+    parseClaudeLine(line, directorEvent);
+    if (line.includes('"subtype":"init"')) {
+      try {
+        directorSessionId = JSON.parse(line).session_id || directorSessionId;
+      } catch {
+        /* not json */
+      }
+    }
+    // Each `result` answers the oldest prompt still waiting (FIFO).
+    contextLog.observe(contextLog.head('director'), line);
   });
   proc.stderr.setEncoding('utf8');
   proc.stderr.on('data', (chunk) => {
@@ -1044,6 +1066,7 @@ function startDirector(options = {}) {
   proc.on('close', (code) => {
     if (directorProc !== proc) return;
     directorProc = null;
+    contextLog.interrupt('director', { failed: code !== 0 && code !== null, error: stderr.trim() });
     directorEvent({ type: 'dead', code, message: stderr.trim().slice(-300) });
   });
   proc.stdin.on('error', () => {});
@@ -1056,19 +1079,29 @@ ipcMain.handle('director:start', (_event, options = {}) =>
   NO_CLAUDE ? { error: 'Claude is disabled for this test run' } : startDirector(options)
 );
 
-ipcMain.handle('director:send', (_event, { text } = {}) => {
+ipcMain.handle('director:send', (_event, { text, workspace } = {}) => {
   const message = String(text || '').trim();
   if (!message) return { error: 'empty message' };
   if (!directorProc) {
     const started = startDirector();
     if (started.error) return started;
   }
+  const turnId = contextLog.begin('director', {
+    queue: true,
+    prompt: message,
+    agentName: 'Director',
+    model: normalizeModel(directorOptions.model || DIRECTOR_MODEL),
+    effort: normalizeEffort(directorOptions.effort || DIRECTOR_EFFORT),
+    sessionId: directorSessionId,
+    workspace: workspace && fs.existsSync(workspace) ? workspace : defaultWorkspace(),
+  });
   try {
     directorProc.stdin.write(
       `${JSON.stringify({ type: 'user', message: { role: 'user', content: message } })}\n`
     );
     return { sent: true };
   } catch (error) {
+    contextLog.finish(turnId, { error: error.message });
     return { error: error.message };
   }
 });
@@ -1123,6 +1156,17 @@ ipcMain.handle('claude:send', (_event, options = {}) => {
 
   const cwd = options.cwd && fs.existsSync(options.cwd) ? options.cwd : defaultWorkspace();
 
+  // Track this turn for the shared-context log (closes any turn it replaces).
+  const turnId = contextLog.begin(nodeId, {
+    prompt: String(options.message || ''),
+    model: normalizeModel(options.model),
+    effort: normalizeEffort(options.effort),
+    agentName: options.agentName,
+    joint: options.joint,
+    rank: options.rank,
+    workspace: cwd,
+  });
+
   let proc;
   try {
     proc = spawnClaudeProcess(args, {
@@ -1130,6 +1174,7 @@ ipcMain.handle('claude:send', (_event, options = {}) => {
       env: { ...process.env, TERM: 'xterm-256color', FORCE_COLOR: '0' },
     });
   } catch (error) {
+    contextLog.finish(turnId, { error: error.message });
     chatEvent(nodeId, { type: 'error', message: error.message });
     return { error: error.message };
   }
@@ -1137,13 +1182,22 @@ ipcMain.handle('claude:send', (_event, options = {}) => {
   chatProcs.set(nodeId, proc);
 
   let stderr = '';
-  pipeLines(proc.stdout, (line) => parseClaudeLine(line, (event) => chatEvent(nodeId, event)));
+  pipeLines(proc.stdout, (line) => {
+    parseClaudeLine(line, (event) => chatEvent(nodeId, event));
+    contextLog.observe(turnId, line);
+  });
   proc.stderr.setEncoding('utf8');
   proc.stderr.on('data', (chunk) => {
     stderr += chunk;
+    contextLog.noteStderr(turnId, chunk);
   });
-  proc.on('error', (error) => chatEvent(nodeId, { type: 'error', message: error.message }));
+  proc.on('error', (error) => {
+    contextLog.finish(turnId, { error: error.message });
+    chatEvent(nodeId, { type: 'error', message: error.message });
+  });
   proc.on('close', (code) => {
+    // Normally already logged when the result arrived; this catches a crash.
+    contextLog.finish(turnId, { failed: code !== 0 && code !== null });
     if (chatProcs.get(nodeId) === proc) chatProcs.delete(nodeId);
     if (code !== 0 && code !== null && stderr.trim()) {
       chatEvent(nodeId, { type: 'error', message: stderr.trim().slice(0, 300) });
@@ -1164,6 +1218,7 @@ ipcMain.handle('claude:send', (_event, options = {}) => {
 
 ipcMain.on('claude:cancel', (_event, { nodeId } = {}) => {
   const id = String(nodeId || '');
+  contextLog.interrupt(id);
   const proc = chatProcs.get(id);
   if (proc) {
     try {
@@ -1303,6 +1358,23 @@ ipcMain.handle('context:sync', (_event, content) => {
     return false;
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Shared-context log — read API (entries are written by claude:send)
+ * ------------------------------------------------------------------ */
+
+// No workspace given: the same fallback claude:send uses for an agent's cwd.
+ipcMain.handle('context-log:list', (_event, { workspace, limit } = {}) => {
+  try {
+    return contextLog.list({ workspace: workspace || defaultWorkspace(), limit });
+  } catch {
+    return [];
+  }
+});
+
+ipcMain.handle('context-log:paths', (_event, { workspace } = {}) =>
+  contextLog.paths({ workspace: workspace || defaultWorkspace() })
+);
 
 /* ------------------------------------------------------------------ *
  * JointedAgents — shared context files for jointed teams
@@ -1642,8 +1714,9 @@ function createWindow() {
     const { runStressTest } = require('./stresstest');
     const { runOnboardTest } = require('./onboardtest');
     const { runLookTest } = require('./looktest');
+    const { runContextLogTest } = require('./contextlogtest');
     const kind = process.env.XODECODE_TEST_KIND;
-    const tests = { agent: runAgentToolTest, stress: runStressTest, onboard: runOnboardTest, look: runLookTest };
+    const tests = { agent: runAgentToolTest, stress: runStressTest, onboard: runOnboardTest, look: runLookTest, contextlog: runContextLogTest };
     const runTest = tests[kind] || runTeamTest;
     mainWindow.webContents.once('did-finish-load', () => {
       runTest(mainWindow, { url: control.url, token: control.token, agentToken: control.agentToken }).catch((error) => {
@@ -1687,6 +1760,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
+  // Turns still running when the app closes are logged, not lost.
+  contextLog.finishAll();
   control.stop();
   stopVoice();
   stopDirector();

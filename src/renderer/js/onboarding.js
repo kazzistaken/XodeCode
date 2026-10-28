@@ -125,7 +125,7 @@ export function initOnboarding(ctx) {
       return el(
         'div',
         { class: 'onboard-step' },
-        el('span', { class: 'onboard-mark', html: icon('claude') }),
+        el('span', { class: 'onboard-mark', html: icon('xodecode') }),
         el('h1', { text: 'Welcome to XodeCode' }),
         el('p', {
           text: 'A canvas for running Claude Code agents side by side — single sessions or whole teams — with an AI Director that opens, arranges and prompts them for you.',
@@ -240,7 +240,7 @@ export function initOnboarding(ctx) {
       return el(
         'div',
         { class: 'onboard-step' },
-        el('span', { class: 'onboard-mark', html: icon('claude') }),
+        el('span', { class: 'onboard-mark', html: icon('xodecode') }),
         el('h2', { text: 'Ready' }),
         el('p', { text: 'Want a quick tour of the interface? It takes thirty seconds.' }),
         footer(

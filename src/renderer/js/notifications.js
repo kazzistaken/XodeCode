@@ -167,14 +167,18 @@ export function initNotifications(ctx) {
 
   /* ------------------------------ events ----------------------------- */
 
-  store.on('attention', ({ id, kind, snippet, raw }) => {
-    attention.set(id, { kind, snippet, raw, at: Date.now() });
-    render();
+  // One system notification per agent and kind, even when a finish is
+  // reported both by the status watcher below and by the terminal itself.
+  const lastSystem = new Map();
 
+  function systemNotify(id, kind, snippet) {
     if (!store.state.settings.agentNotifications) return;
     if (document.hasFocus()) return;
     const found = store.findNode(id);
     if (!found || !('Notification' in window)) return;
+    const key = `${id}:${kind}`;
+    if (Date.now() - (lastSystem.get(key) || 0) < 5000) return;
+    lastSystem.set(key, Date.now());
     const title = `${found.node.callSign} ${kind === 'needs' ? 'needs you' : 'finished'}`;
     try {
       if (Notification.permission === 'granted') {
@@ -186,6 +190,34 @@ export function initNotifications(ctx) {
     } catch {
       /* ignore */
     }
+  }
+
+  store.on('attention', ({ id, kind, snippet, raw }) => {
+    attention.set(id, { kind, snippet, raw, at: Date.now() });
+    render();
+    systemNotify(id, kind, snippet);
+  });
+
+  // Any agent going from working to idle is "finished", whether or not it is
+  // on screen. Short blips (typing echo in a terminal) and the window you are
+  // typing in don't count.
+  const MIN_WORK_MS = 3000;
+  const workingSince = new Map();
+  store.on('status', (meta) => {
+    if (!meta || meta.kind !== 'terminal' || meta.cli !== 'claude') return;
+    if (meta.status === 'working') {
+      if (!workingSince.has(meta.id)) workingSince.set(meta.id, Date.now());
+      return;
+    }
+    const since = workingSince.get(meta.id);
+    workingSince.delete(meta.id);
+    if (meta.status !== 'idle' || !since || Date.now() - since < MIN_WORK_MS) return;
+    if (!store.state.settings.agentNotifications || ctx.canvas.isFocused(meta.id)) return;
+    const prior = attention.get(meta.id);
+    const snippet = prior?.kind === 'finished' ? prior.snippet : meta.title || '';
+    attention.set(meta.id, { kind: 'finished', snippet, raw: '', at: Date.now() });
+    render();
+    systemNotify(meta.id, 'finished', snippet);
   });
 
   store.on('selection', (id) => {

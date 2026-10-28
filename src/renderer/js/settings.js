@@ -256,11 +256,11 @@ export function initSettings(ctx) {
             },
           }),
           settingRow({
-            title: 'Arrange windows side by side',
-            desc: 'New windows open beside the last one, in rows, each at its own size; zoom out to see them all. Turn off to shrink every window so they fit on one screen.',
-            value: store.state.settings.fullSizeWindows !== false,
+            title: 'Keep windows at their own size',
+            desc: 'Windows line up in rows at the size you give them, past the edge of the screen; zoom out to see them all. Off: every window is tiled to fit on screen.',
+            value: store.state.settings.flowLayout === true,
             onChange: (value) => {
-              store.setSetting('fullSizeWindows', value);
+              store.setSetting('flowLayout', value);
               ctx.canvas.relayout?.({ force: true, animate: true });
             },
           }),
@@ -339,10 +339,17 @@ export function initSettings(ctx) {
             ),
             el('span', { class: 'policy-tag', text: 'Default' })
           ),
+          groupLabel('Watching'),
+          settingRow({
+            title: 'Follow mode',
+            desc: 'When an agent starts working, needs you or finishes, the camera glides over to it, then back to where you were. Moving the camera yourself pauses it for a few seconds.',
+            value: Boolean(store.state.settings.followMode),
+            onChange: (value) => store.setSetting('followMode', value),
+          }),
           groupLabel('Notifications'),
           settingRow({
             title: 'Agent notifications',
-            desc: 'List agents you cannot see when they finish or need you (top right), and send a system notification while XodeCode is in the background.',
+            desc: 'List agents when they finish or need you (top right), and send a system notification while XodeCode is in the background.',
             value: store.state.settings.agentNotifications,
             onChange: (value) => store.setSetting('agentNotifications', value),
           }),

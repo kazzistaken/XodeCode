@@ -104,6 +104,14 @@ export class Canvas {
 
     store.on('page', () => this.syncActivePage());
 
+    // Pinning the page bar changes the room the tiles have.
+    let pinned = !!store.state.settings.pinTopbar;
+    store.on('settings', (settings) => {
+      if (!!settings.pinTopbar === pinned) return;
+      pinned = !!settings.pinTopbar;
+      this.relayout({ animate: true });
+    });
+
     // Re-tile when the window changes size so the layout keeps filling the
     // screen. Debounced so a drag-resize does not thrash the terminals.
     window.addEventListener('resize', () => {
@@ -280,8 +288,10 @@ export class Canvas {
       }
     }
 
-    // Text follows the window: bigger window, bigger text.
-    const contentScale = contentScaleFor(meta);
+    // Text follows the window: bigger window, bigger text. Tiled windows share
+    // one size per page (set in relayout), so neighbours read alike.
+    const tiled = this._tileText?.get(meta.id);
+    const contentScale = tiled && this.autoLayoutOn() ? tiled : contentScaleFor(meta);
     if (view.setContentScale) view.setContentScale(contentScale);
     else el.style.setProperty('--content-scale', String(contentScale));
 
@@ -291,33 +301,25 @@ export class Canvas {
     this._scheduleCull();
   }
 
-  /** Team colour, rank badge and team chip on a window's title bar. */
+  /** Marks team windows and puts the agent's name on the border. */
   _syncTeamChrome(meta, el) {
     const joint = meta.joint ? store.joints[meta.joint] : null;
-    const head = el.querySelector(':scope > .node-head');
-    let chip = head?.querySelector(':scope > .node-joint');
+    let tag = el.querySelector(':scope > .node-tag');
     if (!joint) {
       el.classList.remove('is-joint', 'is-lead');
       el.style.removeProperty('--joint-color');
-      chip?.remove();
+      tag?.remove();
       return;
     }
-    const lead = meta.rank === 'lead';
     el.classList.add('is-joint');
-    el.classList.toggle('is-lead', lead);
-    // Team UI is white everywhere; joint.color is kept in the data only.
-    el.style.setProperty('--joint-color', '#ffffff');
-    if (!head) return;
-    if (!chip) {
-      chip = document.createElement('span');
-      chip.className = 'node-joint';
-      chip.append(document.createElement('b'), document.createElement('span'));
-      head.insertBefore(chip, head.querySelector(':scope > .node-status'));
+    el.classList.toggle('is-lead', meta.rank === 'lead');
+    // The window border carries the agent's name and nothing else.
+    if (!tag) {
+      tag = document.createElement('span');
+      tag.className = 'node-tag';
+      el.append(tag);
     }
-    chip.classList.toggle('is-lead', lead);
-    chip.firstChild.textContent = lead ? 'Lead' : 'Worker';
-    chip.lastChild.textContent = joint.name;
-    chip.title = lead ? `Lead of team ${joint.name}` : `Worker in team ${joint.name}`;
+    tag.textContent = meta.callSign || '';
   }
 
   /** Re-apply rank chrome and lines after the hierarchy changes. */
@@ -555,7 +557,51 @@ export class Canvas {
   /** The arrangement in use: "grid" means side by side while that setting is on. */
   layoutMode(page = store.page) {
     const mode = page.layout || 'grid';
-    return mode === 'grid' && store.state.settings.fullSizeWindows !== false ? 'flow' : mode;
+    return mode === 'grid' && store.state.settings.flowLayout === true ? 'flow' : mode;
+  }
+
+  /**
+   * Screen space the tiles keep clear of, in px: the prompt bar below, the
+   * page bar above while it is pinned, and the dock on the left while it holds
+   * windows (mirrored on the right so the tiles stay centred on the prompt).
+   */
+  layoutInsets(page = store.page) {
+    const insets = { ...LAYOUT.insets };
+    if (store.state.settings.pinTopbar) insets.top = 64;
+    if (page.nodes.some((node) => node.parked)) {
+      insets.left = 84;
+      insets.right = 84;
+    }
+    return insets;
+  }
+
+  /**
+   * Keep every tiled window in view: glide the camera so the arrangement fills
+   * the screen, zooming out only when there are more windows than fit at a
+   * readable size.
+   */
+  frameTiles(rects, page = store.page) {
+    if (!rects.length || page.id !== store.page.id) return;
+    const insets = this.layoutInsets(page);
+    const cw = this.viewportEl.clientWidth;
+    const ch = this.viewportEl.clientHeight;
+    const minX = Math.min(...rects.map((r) => r.x));
+    const minY = Math.min(...rects.map((r) => r.y));
+    const maxX = Math.max(...rects.map((r) => r.x + r.w));
+    const maxY = Math.max(...rects.map((r) => r.y + r.h));
+    const availW = cw - insets.left - insets.right;
+    const availH = ch - insets.top - insets.bottom;
+    const scale = clamp(Math.min(1, availW / (maxX - minX), availH / (maxY - minY)), MIN_ZOOM, 1);
+    const target = {
+      scale,
+      x: Math.round(insets.left + availW / 2 - ((minX + maxX) / 2) * scale),
+      y: Math.round(insets.top + availH / 2 - ((minY + maxY) / 2) * scale),
+    };
+    const vp = this._vpTarget || page.viewport;
+    if (Math.abs(vp.x - target.x) < 1 && Math.abs(vp.y - target.y) < 1 && Math.abs(vp.scale - target.scale) < 0.001) {
+      return;
+    }
+    this.animateViewport(target);
   }
 
   /**
@@ -571,7 +617,7 @@ export class Canvas {
         count: nodes.length,
         view: this.layoutFrame(),
         scale: 1,
-        config: LAYOUT,
+        config: { ...LAYOUT, insets: this.layoutInsets(page) },
         mode,
         mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
       });
@@ -630,6 +676,17 @@ export class Canvas {
       return [];
     }
     const fresh = options.fresh || null;
+    // Tiles share the text size of the smallest one; free-sized windows
+    // (side-by-side rows) keep their own.
+    if (!this._tileText) this._tileText = new Map();
+    const shared =
+      this.layoutMode(page) === 'flow'
+        ? null
+        : Math.min(...plan.map(({ node, rect }) => contentScaleFor({ kind: node.kind, w: rect.w, h: rect.h })));
+    for (const { node } of plan) {
+      if (shared) this._tileText.set(node.id, shared);
+      else this._tileText.delete(node.id);
+    }
     for (const { node, rect } of plan) {
       // A window being dragged keeps following the pointer; it drops into
       // its slot when released.
@@ -646,7 +703,9 @@ export class Canvas {
       }
     }
     store.save();
-    return plan.map((item) => item.rect);
+    const rects = plan.map((item) => item.rect);
+    if (this.layoutMode(page) !== 'flow') this.frameTiles(rects, page);
+    return rects;
   }
 
   /** Switch the page's arrangement ("grid", "columns", "rows" or "focus"). */

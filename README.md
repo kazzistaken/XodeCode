@@ -1,3 +1,5 @@
+<img src="assets/xodecode.png" width="88" alt="XodeCode icon: four agents linked to the Director">
+
 # XodeCode
 
 A spatial canvas for commanding AI coding agents — an Electron desktop app in the spirit of [CNVS](https://cnvs.dev). Instead of one linear chat thread, agents, terminals, notes and sketches live as windows on an infinite, multi-page canvas.
@@ -26,13 +28,13 @@ The first time it opens, a short setup lets you pick a background and checks tha
 npm run shortcut
 ```
 
-Generates `assets/xodecode.ico` and places a **XodeCode** shortcut on your Desktop that launches the bundled Electron runtime against this folder — no terminal window involved. To also add it to the Start Menu:
+Places a **XodeCode** shortcut on your Desktop that launches the bundled Electron runtime against this folder — no terminal window involved. To also add it to the Start Menu:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/create-shortcut.ps1 -StartMenu
 ```
 
-The shortcut stores an absolute path, so re-run it if you move the project folder.
+The shortcut stores an absolute path, so re-run it if you move the project folder. The icon (four agents linked to the Director) is drawn from code: `npm run icon` redraws `assets/xodecode.ico` and `assets/xodecode.png`.
 
 ---
 
@@ -193,7 +195,7 @@ The GUI-chat mode needs this even more than terminals do: it runs `claude -p` (p
 - **Text follows the window.** Make a window bigger and its text grows with it; make it smaller and the text shrinks (terminals, chats, browsers, notes, boards and the music player).
 - **A framed canvas.** Tiled windows keep a generous border from the screen edges instead of running edge to edge.
 - **Drag to reorder.** Dragging a tiled window slides its neighbours out of the way and drops it into the slot under the pointer. Re-tiles, camera moves and window entrances all glide.
-- **Auto-arranged windows**: every app window tiles itself side by side and resizes to fill the screen, reflowing whenever one opens or closes or the window resizes. Turn it off in **Settings → Canvas → Layout** to place windows freely, or run `layout` to re-tile on demand.
+- **Auto-arranged windows**: every app window is tiled to fill the screen, with nothing hidden behind the prompt bar or the dock, so all of them are always in view. Rows split as evenly as possible (seven windows become 4 + 3), odd counts can stand one tall window beside a stack, and every window on a page shows text at the same size. Past about a dozen windows the canvas zooms out instead of shrinking them further. Everything reflows whenever a window opens, closes or is docked, or the app window resizes. Turn it off in **Settings → Canvas → Layout** to place windows freely, or run `layout` to re-tile on demand.
 - **Undo / redo** (`Ctrl` `Z` / `Ctrl` `Shift` `Z`) for adds, closes, moves and resizes.
 - **Multi-select**: `Shift`-click to add, `Shift`-drag on empty canvas to marquee, `Ctrl` `A` for all, drag to move the group, `Ctrl` `D` to duplicate, `Delete` to remove.
 - **Task board** node (`File ▸ New task board`, or `board`): a kanban the Director keeps updated as workstreams move from *todo* to *doing* to *done*.

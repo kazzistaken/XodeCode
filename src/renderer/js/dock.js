@@ -30,11 +30,11 @@ function groupOf(node) {
 
 /* App-icon artwork: a gradient squircle with a crisp glyph, one per kind. */
 const ART = {
+  // Claude agents: just the orange asterisk, no plate.
   agent: {
-    from: '#e08a5c',
-    to: '#b4552f',
+    plain: true,
     glyph:
-      '<g stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M22 10.5v23M12 16.2l20 11.6M32 16.2 12 27.8"/></g>',
+      '<image href="../../assets/claude.png" x="7" y="7" width="30" height="30" />',
   },
   terminal: {
     from: '#3a3f4a',
@@ -71,12 +71,13 @@ const ART = {
 let artId = 0;
 function artSvg(group) {
   const art = ART[group] || ART.note;
+  if (art.plain) return `<svg viewBox="0 0 44 44" aria-hidden="true">${art.glyph}</svg>`;
   const id = `dk${artId++}`;
   return (
     `<svg viewBox="0 0 44 44" aria-hidden="true"><defs>` +
     `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${art.from}"/><stop offset="1" stop-color="${art.to}"/></linearGradient>` +
     `<linearGradient id="${id}s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>` +
-    `<rect width="44" height="44" rx="11" fill="url(#${id})"/>` +
+    `<rect width="44" height="44" rx="11" fill="url(#${id})" fill-opacity=".55"/>` +
     `<rect width="44" height="44" rx="11" fill="url(#${id}s)"/>` +
     `<rect x=".5" y=".5" width="43" height="43" rx="10.5" fill="none" stroke="#fff" stroke-opacity=".16"/>` +
     art.glyph +
@@ -86,7 +87,10 @@ function artSvg(group) {
 
 function logoFor(node) {
   const group = groupOf(node);
-  const holder = el('span', { class: `dock-logo is-art`, html: artSvg(group) });
+  const holder = el('span', {
+    class: `dock-logo ${ART[group]?.plain ? 'is-plain' : 'is-art'}`,
+    html: artSvg(group),
+  });
   if (group === 'browser') {
     const host = hostOf(node.payload?.url);
     // The compass stays until a real site icon arrives (sites without one get a

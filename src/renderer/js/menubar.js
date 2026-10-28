@@ -72,6 +72,7 @@ export function initMenubar(ctx) {
         { label: 'New browser', action: () => ctx.openBrowser() },
         { label: 'New music player', action: () => ctx.openMusic() },
         { label: 'New task board', action: () => ctx.openBoard() },
+        { label: 'Open context log', action: () => ctx.openContextLog() },
         { divider: true },
         { label: 'Choose workspace folder…', action: () => ctx.pickWorkspace() },
         { divider: true },

@@ -22,8 +22,12 @@ export const icons = {
     '<circle cx="12" cy="12" r="8.4" /><path d="M3.6 12h16.8M12 3.6c2.2 2.4 3.3 5.3 3.3 8.4S14.2 18 12 20.4C9.8 18 8.7 15.1 8.7 12S9.8 6 12 3.6z" />'
   ),
 
+  /* the app's own mark: four agents linked to the Director (scripts/make-icon.mjs) */
+  xodecode: `<svg viewBox="0 0 11 11" fill="currentColor" shape-rendering="crispEdges" aria-hidden="true"><path fill-rule="evenodd" d="M0 0h2v2H0zM9 0h2v2H9zM0 9h2v2H0zM9 9h2v2H9zM4 4h3v3H4zM5 5h1v1H5z" /><path opacity=".55" d="M2 2h1v1H2zM3 3h1v1H3zM8 2h1v1H8zM7 3h1v1H7zM3 7h1v1H3zM2 8h1v1H2zM7 7h1v1H7zM8 8h1v1H8z" /></svg>`,
+
   /* agents */
-  claude: wrap('<path d="M12 3.4v17.2M4.6 7.7l14.8 8.6M19.4 7.7 4.6 16.3" />'),
+  // Claude's logo (assets/claude.png), drawn as-is.
+  claude: `<svg viewBox="0 0 24 24" aria-hidden="true"><image href="../../assets/claude.png" width="24" height="24" /></svg>`,
   terminal: wrap('<rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M7.5 9.5l2.8 2.8-2.8 2.8M13 15h4" />'),
   shell: wrap('<path d="M5 7.5 9 12l-4 4.5M12.5 16.5H19" />'),
   sparkle: wrap('<path d="M12 3.6l1.9 5.5 5.5 1.9-5.5 1.9L12 18.4l-1.9-5.5L4.6 11l5.5-1.9z" />'),

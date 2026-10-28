@@ -9,3 +9,6 @@ __pycache__/
 
 # Personal assets that must never be published (e.g. licensed stock images)
 assets/local/
+
+# Per-workspace runtime data (the shared context log)
+.xode/

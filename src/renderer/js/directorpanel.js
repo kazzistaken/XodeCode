@@ -107,11 +107,8 @@ function paint(container, entries, working) {
 
 export function initDirectorPanel(ctx) {
   const panel = $('#director-panel');
-  const dot = $('#director-panel-dot');
-  const statusEl = $('#director-panel-status');
   const body = $('#director-panel-body');
   const logBtn = $('#director-panel-log');
-  const peek = $('#director-panel-peek');
 
   let lastCount = -1;
   let lastStatus = '';
@@ -151,8 +148,6 @@ export function initDirectorPanel(ctx) {
 
   function setStatus(status) {
     const next = status || 'idle';
-    dot.dataset.status = next;
-    statusEl.textContent = next === 'idle' ? directorModelLabel() : STATUS_LABEL[next] || next;
     panel.dataset.status = next;
   }
 
@@ -167,8 +162,6 @@ export function initDirectorPanel(ctx) {
     lastStatus = state.status;
     scheduleCollapse(working ? 'working' : state.status);
     panel.classList.toggle('is-empty', !recent.length && !working);
-    const lastReply = [...recent].reverse().find((entry) => entry.role === 'assistant');
-    if (peek) peek.textContent = lastReply ? lastReply.text.replace(/[#*`_>]+/g, '').replace(/\s+/g, ' ').trim() : '';
     if (!recent.length && !working) {
       body.replaceChildren(
         el('div', { class: 'dx-empty', text: 'Ask the Director to open, close or arrange apps, or to start Claude sessions.' })
@@ -186,6 +179,14 @@ export function initDirectorPanel(ctx) {
 
   store.on('settings', () => setStatus(ctx.director.status().status));
   logBtn?.addEventListener('click', () => {
+    if (!panel.classList.contains('is-collapsed')) {
+      pinned = false;
+      panel.classList.remove('is-pinned');
+      clearTimeout(collapseTimer);
+      clearTimeout(pinTimer);
+      panel.classList.add('is-collapsed');
+      return;
+    }
     pinned = true;
     panel.classList.add('is-pinned');
     clearTimeout(collapseTimer);

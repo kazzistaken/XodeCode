@@ -134,8 +134,7 @@ export function createChatView(meta, canvas, options = {}) {
     brand: 'claude',
     iconName: 'claude',
     actions: [
-      { icon: 'history', title: 'Resume a conversation (/resume)', onClick: (event) => showHistory(event?.currentTarget) },
-      { icon: 'compose', title: 'New conversation (/clear)', onClick: () => newChat() },
+      // /resume and /clear are typed in the chat; the header only closes.
       { icon: 'x', title: 'Close', danger: true, onClick: () => canvas.closeNode(meta.id) },
     ],
   });
@@ -443,6 +442,10 @@ export function createChatView(meta, canvas, options = {}) {
         cwd: cwd(),
         fullPermissions: store.state.settings.agentFullPermissions !== false,
         team: Boolean(meta.joint),
+        // Who is speaking, for the shared-context log.
+        agentName: meta.callSign || '',
+        joint: meta.joint ? { id: meta.joint, name: meta.jointName || store.joints[meta.joint]?.name || '' } : null,
+        rank: meta.joint ? meta.rank || null : null,
       });
     } catch (error) {
       busy = false;

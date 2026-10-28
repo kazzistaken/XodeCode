@@ -46,22 +46,10 @@ export function createSceneView(host) {
     });
   }
 
-  // Hold still while the camera moves (pan/zoom), so every frame goes to the
-  // windows; the water picks up again the moment you stop.
-  let cameraMoving = false;
-  const viewport = host.closest('#viewport');
-  if (viewport) {
-    new MutationObserver(() => {
-      const moving = viewport.classList.contains('is-moving');
-      if (moving !== cameraMoving) {
-        cameraMoving = moving;
-        sync();
-      }
-    }).observe(viewport, { attributes: true, attributeFilter: ['class'] });
-  }
-
+  // Keeps animating while the camera pans and zooms: the scene draws in a
+  // worker (OffscreenCanvas), so it doesn't take frames from the windows.
   function playing() {
-    return wantPlay && !cameraMoving && !document.hidden && !reduceMotion?.matches;
+    return wantPlay && !document.hidden && !reduceMotion?.matches;
   }
 
   function sync() {
