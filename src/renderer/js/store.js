@@ -31,15 +31,20 @@ function defaults() {
       snapToGrid: false,
       sounds: true,
       voice: true,
+      // 'windows' = Windows voice typing (Win+H); 'builtin' = XodeCode's own engine.
+      dictation: 'windows',
       directorModel: 'claude-sonnet-5-5',
       directorEffort: 'low',
       background: '',
       backgroundFit: 'contain',
-      guiTerminals: true,
+      // Tiled windows are screen-sized; zoom out to see them all.
+      fullSizeWindows: true,
       agentFullPermissions: true,
       budgetUsd: 0,
       showTitles: true,
       autoLayout: true,
+      // Glass is the default look; true swaps it for plain solid colors.
+      flatUi: false,
     },
     pages: Array.from({ length: PAGE_COUNT }, (_, i) => makePage(i)),
     activePage: 0,
@@ -98,6 +103,9 @@ function migrate(raw) {
       delete settings.speakFinished;
       delete settings.speakDirector;
       delete settings.ttsVoice;
+      // Claude always renders in GUI mode now; the old switches are gone.
+      delete settings.guiTerminals;
+      delete settings.transparentUi;
       return settings;
     })(),
     joints: raw.joints && typeof raw.joints === 'object' ? raw.joints : {},
@@ -119,7 +127,7 @@ function migrate(raw) {
       viewport: {
         x: Number.isFinite(page.viewport?.x) ? page.viewport.x : 0,
         y: Number.isFinite(page.viewport?.y) ? page.viewport.y : 0,
-        scale: Number.isFinite(page.viewport?.scale) ? page.viewport.scale : 1,
+        scale: Number.isFinite(page.viewport?.scale) ? Math.min(2.4, Math.max(0.5, page.viewport.scale)) : 1,
       },
       layout: ['grid', 'columns', 'rows', 'focus'].includes(page.layout) ? page.layout : 'grid',
       mainId: page.mainId || null,

@@ -42,10 +42,9 @@ function Start-WinRtDictation {
     return $task.Result
   }
 
+  # With no constraints added the recogniser uses its built-in dictation grammar
+  # (Constraints.Add cannot be called from PowerShell 5.1 on a WinRT vector).
   $recognizer = New-Object Windows.Media.SpeechRecognition.SpeechRecognizer
-  $dictation = New-Object Windows.Media.SpeechRecognition.SpeechRecognitionTopicConstraint(
-    [Windows.Media.SpeechRecognition.SpeechRecognitionScenario]::Dictation, 'dictation')
-  $recognizer.Constraints.Add($dictation)
 
   $compiled = Await ($recognizer.CompileConstraintsAsync()) ([Windows.Media.SpeechRecognition.SpeechRecognitionCompilationResult])
   if ($compiled.Status -ne [Windows.Media.SpeechRecognition.SpeechRecognitionResultStatus]::Success) {

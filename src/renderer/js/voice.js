@@ -1,28 +1,71 @@
 import { $ } from './util.js';
+import { store } from './store.js';
 
 /**
- * Dictation for the Director prompt. The heavy lifting lives in the main
- * process (Windows offline speech); this just drives the mic button and
- * appends recognised phrases to the prompt.
+ * Dictation into the prompt box you were using: an agent's chat box, the
+ * Director sheet's composer, or the "Ask the Director" bar (the default).
+ *
+ * By default the mic opens Windows voice typing (Win+H), which types straight
+ * into the focused box and is far more accurate. Settings can switch to the
+ * built-in engine (scripts/dictate.ps1), whose phrases are appended here.
  */
+
+// Prompt boxes dictation may type into.
+const PROMPTS = '#cb-input, .cc-input, .dx-input';
+
 export function initVoice(ctx) {
   const button = $('#cb-mic');
-  const input = $('#cb-input');
-  if (!button || !input) return { toggle() {}, isListening: () => false };
+  const barInput = $('#cb-input');
+  if (!button || !barInput) return { toggle() {}, isListening: () => false };
 
   let listening = false;
   let starting = false;
+  // The prompt box focused most recently (clicking the mic steals focus).
+  let lastPrompt = barInput;
+  let marked = null;
+
+  document.addEventListener('focusin', (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.matches(PROMPTS)) {
+      lastPrompt = target;
+      if (listening) mark(target);
+    }
+  });
+
+  function target() {
+    return lastPrompt && lastPrompt.isConnected ? lastPrompt : barInput;
+  }
+
+  /** Show "Listening…" in the box the words will go to. */
+  function mark(input) {
+    unmark();
+    marked = input;
+    input.dataset.placeholder = input.placeholder;
+    input.placeholder = 'Listening… speak now';
+    input.classList.add('is-dictating');
+  }
+
+  function unmark() {
+    if (!marked) return;
+    marked.placeholder = marked.dataset.placeholder ?? marked.placeholder;
+    delete marked.dataset.placeholder;
+    marked.classList.remove('is-dictating');
+    marked = null;
+  }
 
   function setListening(value) {
     listening = value;
     button.classList.toggle('is-listening', value);
     button.setAttribute('aria-pressed', String(value));
     button.title = value ? 'Stop dictation' : 'Dictate';
+    if (value) mark(target());
+    else unmark();
   }
 
   function append(text) {
     let clean = String(text || '').replace(/\s+/g, ' ').trim();
     if (!clean) return;
+    const input = target();
     const current = input.value.trimEnd();
     // Start of the prompt or a new sentence: capitalise the first letter.
     if (!current || /[.!?]$/.test(current)) clean = clean[0].toUpperCase() + clean.slice(1);
@@ -36,7 +79,29 @@ export function initVoice(ctx) {
     }
   }
 
+  /** Focus the prompt box and open (or close) Windows voice typing. */
+  async function voiceTyping() {
+    const input = target();
+    input.focus();
+    try {
+      input.setSelectionRange(input.value.length, input.value.length);
+    } catch {
+      /* ignore */
+    }
+    button.classList.add('is-listening');
+    setTimeout(() => button.classList.remove('is-listening'), 1600);
+    try {
+      const result = await window.api.voice.typing();
+      if (!result?.ok) ctx.toast(result?.error || 'Could not open Windows voice typing.', 'warn');
+    } catch (error) {
+      ctx.toast(error?.message || 'Could not open Windows voice typing.', 'warn');
+    }
+  }
+
+  const useWindows = () => store.state.settings.dictation !== 'builtin';
+
   async function start() {
+    if (useWindows()) return voiceTyping();
     if (starting || listening) return;
     starting = true;
     button.classList.add('is-busy');
@@ -61,6 +126,8 @@ export function initVoice(ctx) {
     setListening(false);
   }
 
+  // Keep the prompt focused: pressing the mic must not move focus away from it.
+  button.addEventListener('pointerdown', (event) => event.preventDefault());
   button.addEventListener('click', () => {
     if (listening) stop();
     else start();

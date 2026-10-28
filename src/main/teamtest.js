@@ -168,4 +168,98 @@ async function runTeamTest(mainWindow, control) {
   app.quit();
 }
 
-module.exports = { runTeamTest };
+/**
+ * Agent canvas/browser tools (XODECODE_TEST_KIND=agent): a standalone Haiku
+ * agent opens a local test page, reads it, types into it, screenshots it, and
+ * tries to drive a browser the user opened (which must be refused).
+ */
+async function runAgentToolTest(mainWindow, control) {
+  const outDir = process.env.XODECODE_TEAMTEST;
+  fs.mkdirSync(outDir, { recursive: true });
+  const run = (js) => mainWindow.webContents.executeJavaScript(js);
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const log = (name, value) => console.log(`TEAMTEST_${name} ${JSON.stringify(value)}`);
+
+  // A tiny page: typing a name and pressing Enter changes the heading.
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end(`<!doctype html><title>Greeter</title><h1 id="h">Hello stranger</h1>
+      <form onsubmit="event.preventDefault();document.getElementById('h').textContent='Hello '+document.getElementById('n').value">
+      <input id="n" placeholder="Your name"><button>Greet</button></form>`);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const pageUrl = `http://127.0.0.1:${server.address().port}/`;
+
+  const started = Date.now();
+  await wait(BOOT_DELAY);
+  const setup = await rpc(control.url, control.token, 'batch', {
+    actions: [
+      { op: 'workspace', path: outDir },
+      { op: 'browser', url: 'https://example.com' },
+    ],
+  });
+  const userBrowser = setup.result?.[1]?.result?.callSign || 'example.com';
+  log('SETUP', { userBrowser, pageUrl });
+  const agent = await rpc(control.url, control.token, 'batch', {
+    actions: [
+      {
+        op: 'agent',
+        model: 'haiku',
+        effort: 'low',
+        prompt:
+          `Test your xode tools, be brief, no file edits. 1) browser_open ${pageUrl} 2) browser_read it ` +
+          `3) browser_type "pelican" into the name input with submit:true 4) browser_screenshot your browser ` +
+          `5) try navigate on the window named "${userBrowser}" to https://example.org and note the error ` +
+          `6) reply with the page heading you see now and the error from step 5.`,
+      },
+    ],
+  });
+  const agentId = agent.result?.[0]?.result?.id;
+  log('AGENT', agent.result?.[0]?.result?.callSign || agent);
+
+  let final = null;
+  while (Date.now() - started < TIMEOUT) {
+    await wait(4000);
+    final = await run(`(() => {
+      const s = window.__xo.store;
+      const me = s.findNode(${JSON.stringify(agentId)})?.node;
+      const browsers = s.allNodes().filter((n) => n.kind === 'browser');
+      return {
+        status: me ? me.status : 'gone',
+        browsers: browsers.map((n) => ({ name: n.callSign, url: n.payload && n.payload.url, owner: n.payload && n.payload.ownerId ? 'agent' : 'user' })),
+      };
+    })()`);
+    const own = final.browsers.find((b) => b.owner === 'agent');
+    if (own && final.status === 'idle') break;
+  }
+  log('STATE', final);
+  // What the agent's page shows now, read straight from its webview.
+  log(
+    'HEADING',
+    await run(`(async () => {
+      const s = window.__xo.store;
+      const node = s.allNodes().find((n) => n.kind === 'browser' && n.payload && n.payload.ownerId);
+      if (!node) return null;
+      return window.__xo.canvas.views.get(node.id).exec('document.getElementById("h") && document.getElementById("h").textContent');
+    })()`)
+  );
+  // The agent's own account: tool calls and its final reply.
+  const chatId = await run(`window.__xo.store.findNode(${JSON.stringify(agentId)})?.node.chatId || null`);
+  try {
+    const chat = JSON.parse(fs.readFileSync(path.join(outDir, 'profile', 'chats', `${chatId}.json`), 'utf8'));
+    log(
+      'TOOLS',
+      chat.messages.filter((m) => m.role === 'tool').map((m) => `${m.tool || m.text}${m.result && m.result.isError ? ' (error)' : ''}`)
+    );
+    log('REPLY', (chat.messages.filter((m) => m.role === 'assistant').pop() || {}).text || null);
+  } catch (error) {
+    log('CHAT', String(error.message));
+  }
+  const image = await mainWindow.webContents.capturePage();
+  fs.writeFileSync(path.join(outDir, 'agent.png'), image.toPNG());
+  server.close();
+  log('DONE', { seconds: Math.round((Date.now() - started) / 1000) });
+  app.quit();
+}
+
+module.exports = { runTeamTest, runAgentToolTest };

@@ -211,12 +211,36 @@ export function createChatView(meta, canvas, options = {}) {
 
   /* ----------------------------- rendering ---------------------------- */
 
-  function render() {
+  // Rendering is incremental: each message keeps its row until something it
+  // shows changes, and many updates in one frame (a streaming reply) render
+  // once. Long conversations stay cheap, and expanded outputs stay expanded.
+  const rowCache = new WeakMap(); // message -> { key, row }
+  let welcome = null; // { cwd, row }
+  let renderFrame = 0;
+  let renderToBottom = false;
+
+  function rowFor(message) {
+    const running = busy && message.role === 'tool' && !message.result;
+    const key = `${String(message.text ?? '').length}|${message.result ? 1 : 0}|${running ? 1 : 0}|${cwd()}`;
+    const cached = rowCache.get(message);
+    if (cached && cached.key === key) return cached.row;
+    const row = renderMessage(message, { cwd: cwd(), running });
+    rowCache.set(message, { key, row });
+    return row;
+  }
+
+  function render({ toBottom = false } = {}) {
+    if (toBottom) renderToBottom = true;
+    if (renderFrame) return;
+    renderFrame = requestAnimationFrame(renderNow);
+  }
+
+  function renderNow() {
+    renderFrame = 0;
     const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
-    const rows = [welcomeBox(cwd())];
-    for (const message of chat.messages) {
-      rows.push(renderMessage(message, { cwd: cwd(), running: busy && message.role === 'tool' && !message.result }));
-    }
+    if (!welcome || welcome.cwd !== cwd()) welcome = { cwd: cwd(), row: welcomeBox(cwd()) };
+    const rows = [welcome.row];
+    for (const message of chat.messages) rows.push(rowFor(message));
     if (busy) {
       // One spinner per turn, so its timer keeps counting across re-renders.
       if (!spinner) spinner = spinnerRow();
@@ -224,8 +248,14 @@ export function createChatView(meta, canvas, options = {}) {
     } else {
       spinner = null;
     }
-    log.replaceChildren(...rows);
-    if (nearBottom || busy) scroller.scrollTop = scroller.scrollHeight;
+    // Touch only what changed: rows already in place stay put.
+    rows.forEach((row, index) => {
+      const current = log.children[index];
+      if (current !== row) log.insertBefore(row, current || null);
+    });
+    while (log.children.length > rows.length) log.lastElementChild.remove();
+    if (nearBottom || busy || renderToBottom) scroller.scrollTop = scroller.scrollHeight;
+    renderToBottom = false;
     syncFooter();
   }
 
@@ -287,8 +317,7 @@ export function createChatView(meta, canvas, options = {}) {
     if (chat.title) meta.title = chat.title;
     syncTitles();
     store.save();
-    render();
-    scroller.scrollTop = scroller.scrollHeight;
+    render({ toBottom: true });
     return true;
   }
 
@@ -641,8 +670,7 @@ export function createChatView(meta, canvas, options = {}) {
         chat.sessionId = saved.sessionId || chat.sessionId;
         chat.cost = Number(saved.cost) || 0;
         chat.messages = saved.messages;
-        render();
-        scroller.scrollTop = scroller.scrollHeight;
+        render({ toBottom: true });
       } else if (chat.messages.length) {
         persist();
       }

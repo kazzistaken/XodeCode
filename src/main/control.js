@@ -9,8 +9,8 @@
  *
  * Requests are relayed to the renderer, which owns all app state.
  *
- * Besides the master token (Director and the `xode` CLI), every team agent
- * gets its own token. Agent tokens may only call `team.*` methods, and the
+ * Besides the master token (Director and the `xode` CLI), every Claude agent
+ * gets its own token. Agent tokens may only call `team.*` and `tool.*` methods, and the
  * request reaches the renderer tagged with the calling window, which checks
  * the caller's rank and team before acting.
  */
@@ -60,8 +60,8 @@ function createControlServer({ sendToRenderer, log = console.log }) {
       const id = String(payload.id ?? ++sequence);
       try {
         const method = String(payload.method || '');
-        if (caller && !method.startsWith('team.')) {
-          throw new Error('agents may only use team tools');
+        if (caller && !method.startsWith('team.') && !method.startsWith('tool.')) {
+          throw new Error('agents may only use their own xode tools');
         }
         const result = await dispatch(id, method, payload.params || {}, caller);
         response

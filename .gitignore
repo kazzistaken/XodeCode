@@ -6,3 +6,6 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# Personal assets that must never be published (e.g. licensed stock images)
+assets/local/

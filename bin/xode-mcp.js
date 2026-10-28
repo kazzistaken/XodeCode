@@ -15,18 +15,156 @@
  * single smooth re-tile. Requests go to the same token-authenticated control
  * bridge the `xode` CLI uses (XODE_CONTROL_URL / XODE_CONTROL_TOKEN).
  *
- * With XODE_MCP_MODE=team it instead serves one team agent (lead or worker)
- * the team tools, using that agent's own token.
+ * With XODE_MCP_MODE=agent it instead serves one Claude agent its canvas and
+ * browser tools (plus the team tools with XODE_MCP_TEAM=1), using that agent's
+ * own token so the app knows who is asking.
  */
 
 const http = require('node:http');
 
 const ENDPOINT = process.env.XODE_CONTROL_URL;
 const TOKEN = process.env.XODE_CONTROL_TOKEN;
-// "team" mode serves a team agent (lead or worker) instead of the Director.
-const TEAM_MODE = process.env.XODE_MCP_MODE === 'team';
+// "agent" mode serves one Claude agent instead of the Director; team members
+// ("team" mode, or XODE_MCP_TEAM=1) also get the team tools.
+const MODE = process.env.XODE_MCP_MODE || '';
+const AGENT_MODE = MODE === 'agent' || MODE === 'team';
+const WITH_TEAM = MODE === 'team' || process.env.XODE_MCP_TEAM === '1';
 
 const NO_ARGS = { type: 'object', properties: {}, additionalProperties: false };
+
+const WINDOW_ARG = {
+  type: 'string',
+  description: 'The browser window: its id or name from the canvas tool (or from browser_open).',
+};
+const TARGET_ARGS = {
+  ref: { type: 'number', description: 'Element number from browser_read.' },
+  selector: { type: 'string', description: 'CSS selector, if there is no ref.' },
+  text: { type: 'string', description: 'Visible text of the element, if there is no ref or selector.' },
+};
+
+/**
+ * Canvas and browser tools for every Claude agent. Anyone may look at the
+ * canvas and read any browser; only windows the agent opened (or, for a team
+ * lead, its team's windows) can be driven or closed. The app enforces this.
+ */
+const AGENT_TOOLS = [
+  {
+    name: 'canvas',
+    description:
+      'List the windows on your canvas page: id, kind, name, title, url, who owns it, and which are yours.',
+    inputSchema: NO_ARGS,
+    annotations: { readOnlyHint: true },
+    method: 'tool.canvas',
+  },
+  {
+    name: 'browser_open',
+    description:
+      'Open a new browser window on the canvas (max 3 of your own). Use it to view web work, e.g. http://localhost:5173. Waits for the page to load.',
+    inputSchema: {
+      type: 'object',
+      properties: { url: { type: 'string' } },
+      required: ['url'],
+      additionalProperties: false,
+    },
+    method: 'tool.browser_open',
+  },
+  {
+    name: 'navigate',
+    description: 'Send one of your browser windows to a URL, or "back" / "forward" / "reload". Waits for the load.',
+    inputSchema: {
+      type: 'object',
+      properties: { window: WINDOW_ARG, url: { type: 'string' } },
+      required: ['window', 'url'],
+      additionalProperties: false,
+    },
+    method: 'tool.navigate',
+  },
+  {
+    name: 'browser_read',
+    description:
+      'Read a browser window: url, title, visible text, and numbered interactive elements (links, buttons, inputs) to use with browser_click / browser_type. Works on any browser on the canvas.',
+    inputSchema: {
+      type: 'object',
+      properties: { window: WINDOW_ARG },
+      required: ['window'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    method: 'tool.browser_read',
+  },
+  {
+    name: 'browser_screenshot',
+    description: 'See a browser window as an image. Works on any browser on the canvas.',
+    inputSchema: {
+      type: 'object',
+      properties: { window: WINDOW_ARG },
+      required: ['window'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    method: 'tool.browser_screenshot',
+  },
+  {
+    name: 'browser_click',
+    description: 'Click an element in one of your browser windows (by ref from browser_read, selector, or text).',
+    inputSchema: {
+      type: 'object',
+      properties: { window: WINDOW_ARG, ...TARGET_ARGS },
+      required: ['window'],
+      additionalProperties: false,
+    },
+    method: 'tool.browser_click',
+  },
+  {
+    name: 'browser_type',
+    description: 'Type into an input in one of your browser windows; submit:true presses Enter afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: WINDOW_ARG,
+        ...TARGET_ARGS,
+        value: { type: 'string', description: 'What to type (replaces the current value).' },
+        submit: { type: 'boolean' },
+      },
+      required: ['window', 'value'],
+      additionalProperties: false,
+    },
+    method: 'tool.browser_type',
+  },
+  {
+    name: 'browser_eval',
+    description: 'Run JavaScript in one of your browser windows and get the result back as JSON.',
+    inputSchema: {
+      type: 'object',
+      properties: { window: WINDOW_ARG, code: { type: 'string', description: 'An expression or IIFE.' } },
+      required: ['window', 'code'],
+      additionalProperties: false,
+    },
+    method: 'tool.browser_eval',
+  },
+  {
+    name: 'note',
+    description: 'Pin a sticky note on the canvas for the user (status, a link, a summary).',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string' } },
+      required: ['text'],
+      additionalProperties: false,
+    },
+    method: 'tool.note',
+  },
+  {
+    name: 'close_window',
+    description: 'Close a window you opened (a browser or note).',
+    inputSchema: {
+      type: 'object',
+      properties: { window: WINDOW_ARG },
+      required: ['window'],
+      additionalProperties: false,
+    },
+    method: 'tool.close',
+  },
+];
 
 /**
  * Team tools. The app knows which window is calling (each agent has its own
@@ -211,10 +349,28 @@ async function callTool(name, args) {
   return { content: [{ type: 'text', text: `unknown tool "${name}"` }], isError: true };
 }
 
-async function callTeamTool(name, args) {
-  const tool = TEAM_TOOLS.find((entry) => entry.name === name);
+/** The tools this agent sees: canvas/browser tools, plus team tools in a team. */
+function agentTools() {
+  return WITH_TEAM ? [...AGENT_TOOLS, ...TEAM_TOOLS] : AGENT_TOOLS;
+}
+
+async function callAgentTool(name, args) {
+  const tool = agentTools().find((entry) => entry.name === name);
   if (!tool) return { content: [{ type: 'text', text: `unknown tool "${name}"` }], isError: true };
-  return { content: [{ type: 'text', text: text(await post(tool.method, args)) }] };
+  const result = await post(tool.method, args);
+  // Screenshots come back as an image the model can look at.
+  if (result && result.image && result.image.data) {
+    return {
+      content: [
+        { type: 'image', data: result.image.data, mimeType: result.image.mime || 'image/jpeg' },
+        { type: 'text', text: result.caption || 'screenshot' },
+      ],
+    };
+  }
+  if (result && typeof result.text === 'string' && Object.keys(result).length === 1) {
+    return { content: [{ type: 'text', text: result.text }] };
+  }
+  return { content: [{ type: 'text', text: text(result) }] };
 }
 
 async function handle(message) {
@@ -226,7 +382,7 @@ async function handle(message) {
       reply(id, {
         protocolVersion: params?.protocolVersion || '2025-06-18',
         capabilities: { tools: {} },
-        serverInfo: { name: TEAM_MODE ? 'team' : 'xode', version: '1.0.0' },
+        serverInfo: { name: 'xode', version: '1.0.0' },
       });
       return;
     case 'ping':
@@ -234,15 +390,15 @@ async function handle(message) {
       return;
     case 'tools/list':
       reply(id, {
-        tools: TEAM_MODE ? TEAM_TOOLS.map(({ method: _method, ...tool }) => tool) : TOOLS,
+        tools: AGENT_MODE ? agentTools().map(({ method: _method, ...tool }) => tool) : TOOLS,
       });
       return;
     case 'tools/call':
       try {
         reply(
           id,
-          TEAM_MODE
-            ? await callTeamTool(params?.name, params?.arguments || {})
+          AGENT_MODE
+            ? await callAgentTool(params?.name, params?.arguments || {})
             : await callTool(params?.name, params?.arguments || {})
         );
       } catch (error) {

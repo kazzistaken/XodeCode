@@ -64,8 +64,6 @@ const NEEDS_PATTERNS = [
   /press enter to (continue|confirm)/i,
 ];
 
-const WORKING_PATTERNS = [/esc to interrupt/i, /thinking…/i, /running…/i];
-
 const THEME = {
   background: 'rgba(0, 0, 0, 0)',
   foreground: '#dcdce2',
@@ -125,8 +123,9 @@ function ensureWired() {
  * ------------------------------------------------------------------ */
 
 function createTerminalView(meta, canvas) {
-  // Claude GUI mode renders a chat instead of an xterm.
-  if (meta.cli === 'claude' && store.state.settings.guiTerminals) {
+  // Claude agents always render as the Claude Code GUI chat; the xterm
+  // below is only for plain shell sessions.
+  if (meta.cli === 'claude') {
     return createChatView(meta, canvas, {
       // Lets the Director prompt this chat exactly like a terminal agent.
       session: {
@@ -139,10 +138,9 @@ function createTerminalView(meta, canvas) {
 
   ensureWired();
 
-  const isClaude = meta.cli === 'claude';
   const chrome = buildNodeChrome(meta, {
-    brand: isClaude ? 'claude' : 'shell',
-    iconName: isClaude ? 'claude' : 'shell',
+    brand: 'shell',
+    iconName: 'shell',
     actions: [
       { icon: 'x', title: 'Close terminal', danger: true, onClick: () => canvas.closeNode(meta.id) },
     ],
@@ -294,43 +292,6 @@ function createTerminalView(meta, canvas) {
   let analyseTimer = null;
   let sawOutput = false;
   let idleTimer = null;
-  let fullPermissions = false;
-  let bypassBuffer = '';
-  let bypassAttempts = 0;
-  let bypassCooldown = 0;
-
-  /**
-   * Bypass-permissions mode shows a one-time warning with "No, exit"
-   * preselected. Nobody is watching an agent terminal, so confirm it the
-   * moment it appears or the agent would sit there forever. The TUI draws with
-   * cursor moves, so the stripped text has no spaces — compare against a
-   * whitespace-free copy.
-   */
-  function acceptBypassWarning(data) {
-    if (!fullPermissions || bypassAttempts >= 2) return;
-    bypassBuffer = (bypassBuffer + stripAnsi(data)).slice(-1800);
-    const now = Date.now();
-    if (now < bypassCooldown) return;
-    const compact = bypassBuffer.replace(/\s+/g, '');
-    if (
-      !/BypassPermissionsmode/i.test(compact) ||
-      !/Yes,Iaccept/i.test(compact) ||
-      !/Entertoconfirm/i.test(compact)
-    ) {
-      return;
-    }
-    bypassAttempts += 1;
-    bypassCooldown = now + 4000;
-    setTimeout(() => {
-      if (!ptyId) return;
-      // Down arrow to "Yes, I accept", then confirm.
-      window.api.pty.write(ptyId, '\u001b[B');
-      setTimeout(() => {
-        if (ptyId) window.api.pty.write(ptyId, '\r');
-      }, 300);
-    }, 350);
-  }
-
   function setStatus(status) {
     if (meta.status === status) return;
     meta.status = status;
@@ -398,28 +359,19 @@ function createTerminalView(meta, canvas) {
     term.write(data);
     sawOutput = true;
     pending = (pending + data).slice(-2400);
-    acceptBypassWarning(data);
     if (!analyseTimer) analyseTimer = setTimeout(analyseOutput, 70);
   }
 
   function startSession() {
     const cols = term.cols || 80;
     const rows = term.rows || 24;
-    fullPermissions = meta.cli === 'claude' && store.state.settings.agentFullPermissions !== false;
     window.api.pty
       .create({
         cols,
         rows,
         cwd: meta.cwd || store.page?.workspace || store.state.workspace || '',
-        command: meta.cli === 'claude' ? 'claude' : 'shell',
-        prompt: meta.prompt || '',
-        model: meta.model || undefined,
-        effort: meta.effort || undefined,
-        appendPrompt: meta.joint ? jointAppendPrompt(meta) : undefined,
-        fullPermissions: store.state.settings.agentFullPermissions !== false,
-        // Team members get their own rank-checked team tools.
+        command: 'shell',
         nodeId: meta.id,
-        team: Boolean(meta.joint),
       })
       .then((result) => {
         if (destroyed) {
@@ -627,7 +579,7 @@ export function spawnTerminal(canvas, options = {}) {
     title ||
     (prompt ? truncate(prompt, 46) : cli === 'claude' ? 'Waiting on the brief' : 'Shell session');
 
-  const guiChat = cli === 'claude' && store.state.settings.guiTerminals;
+  const guiChat = cli === 'claude';
 
   return canvas.createNode({
     kind: 'terminal',

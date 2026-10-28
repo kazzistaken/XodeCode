@@ -128,6 +128,9 @@ export function initMenubar(ctx) {
     {
       label: 'Help',
       items: () => [
+        { label: 'Take the tour', action: () => ctx.startTour?.() },
+        { label: 'Run setup again', action: () => ctx.startSetup?.() },
+        { divider: true },
         { label: 'Keyboard shortcuts', action: () => ctx.openSettings('shortcuts') },
         { label: 'Open Director log', action: () => ctx.openDirectorLog() },
         { divider: true },

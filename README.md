@@ -4,14 +4,21 @@ A spatial canvas for commanding AI coding agents — an Electron desktop app in 
 
 Built on **Electron + xterm.js + node-pty**. Terminals are real PTYs, and they run **Claude Code**.
 
-## Run
+## Install
+
+XodeCode runs on **Windows** (dictation and the desktop shortcut are Windows-only; the rest is plain Electron). You need:
+
+- [Node.js](https://nodejs.org) 20 or newer, and [Git](https://git-scm.com)
+- [Claude Code](https://docs.claude.com/en/docs/claude-code/setup) and a Claude account — agents run on your own plan
 
 ```bash
+git clone https://github.com/kazzistaken/XodeCode.git
+cd XodeCode
 npm install
 npm start
 ```
 
-Requires [Claude Code](https://www.anthropic.com/claude-code) on your `PATH` (`claude --version`).
+The first time it opens, a short setup lets you pick a background and checks that Claude Code is installed and signed in (it can install it or open the sign-in for you). A guided tour then walks through the interface; replay either one from **Help**.
 
 ### Desktop shortcut
 
@@ -83,6 +90,26 @@ writes each member's prompt, and routes by difficulty: hard, logical, architectu
 **Opus at high effort**; simple, mechanical or UI work goes to **Sonnet at low/medium**. Up to **5**
 members per joint.
 
+### Agent canvas & browser tools
+
+Every Claude agent (standalone or in a team) gets its own `xode` MCP server with a token that
+identifies its window:
+
+| Tool | What it does | Who it works on |
+|---|---|---|
+| `canvas` | List the windows on the agent's page, who owns each, which it can control | everything |
+| `browser_read` | Page url, title, visible text and numbered links/buttons/inputs | any browser |
+| `browser_screenshot` | The page as an image the model can see | any browser |
+| `browser_open` | Open a browser on the canvas (max 3 per agent), without stealing focus | — |
+| `navigate` | Go to a URL, or back / forward / reload | own windows |
+| `browser_click` / `browser_type` | Click or fill an element (by ref, CSS selector or text) | own windows |
+| `browser_eval` | Run JavaScript in the page, get JSON back | own windows |
+| `note` / `close_window` | Pin a note; close a window it opened | own windows |
+
+Windows an agent opens are tagged with it ("opened by Rook" in the Director's snapshot). A team
+lead may also drive its team's windows. The user's and the Director's windows are never an
+agent's to change, and an agent token cannot reach the Director's tools.
+
 ### Team hierarchy
 
 Every joint is a ranked team: **you > the Director (the app's AI agent) > one lead > its workers**.
@@ -103,7 +130,13 @@ Standalone sessions are outside the hierarchy.
 - **Hierarchy view** (`Ctrl+Shift+H`, View → Hierarchy, or "show hierarchy"): an org chart with
   each agent's status, current task and latest report. Click a card to jump to the window.
 - **Live test:** `XODECODE_TEAMTEST=<dir> XODECODE_USERDATA=<dir>/profile npx electron .` runs a
-  small Haiku team through every step in a throwaway profile (`src/main/teamtest.js`).
+  small Haiku team through every step in a throwaway profile (`src/main/teamtest.js`). Add
+  `XODECODE_TEST_KIND=agent` to test the agent canvas/browser tools instead.
+- **Stress test:** `XODECODE_TEST_KIND=stress` (same two variables) opens 24 browsers, 8 shells and
+  6 notes and prints frame rates for pan/zoom, busy terminals, memory and CPU
+  (`src/main/stresstest.js`; counts via `XODECODE_STRESS=browsers=40,terms=12`, breakdowns via
+  `XODECODE_STRESS_DIAG=1`). It never starts Claude: the Director, chats and `claude` are blocked
+  for the whole run.
 
 ```bash
 xode joint new --name "checkout"
@@ -154,7 +187,7 @@ The GUI-chat mode needs this even more than terminals do: it runs `claude -p` (p
 - Terminals support copy and paste: `Ctrl` `C` / `Ctrl` `Insert` copies a selection, `Ctrl` `V` / `Shift` `Insert` pastes.
 - **Music player** windows (`File ▸ New music player`, or ask the Director to `music`): a **Radio** tab that searches and plays internet radio (free Radio Browser API, no key) and a **Spotify** tab that embeds the official player for any track/album/playlist link you paste.
 - **In-app browser** windows render real pages on the canvas (back / forward / reload / address bar). Open one from **File ▸ New browser**, or ask the Director to `browser --url "…"`. Pages stay inside the app — never the system browser.
-- The mic button at the left of the prompt dictates into it. It uses the modern Windows speech engine (the one behind Windows voice typing) for accurate, punctuated dictation — turn on **Settings → Privacy & security → Speech → Online speech recognition** in Windows for it. Without that it falls back to the offline engine, listening continuously so no words are lost between phrases. Click the mic again to stop.
+- The mic button at the left of the prompt (or `Ctrl` `Shift` `M`) dictates into the prompt box you were last using — the Director bar, an agent's chat, or the Director sheet. By default it opens **Windows voice typing** (Win+H), Windows' own accurate, punctuated dictation, which types straight into that box. Settings → Canvas can switch to the built-in engine (`scripts/dictate.ps1`) instead.
 - No tool rail: the canvas always grabs. Rectangle, diamond, ellipse, arrow, line, freehand draw, text and sticky note are on keyboard shortcuts (`R` `D` `O` `A` `L` `P` `T` `N`), and `V` returns to grabbing. Drop an image file anywhere to place it.
 - **The dock.** Closing a window — its ×, asking the Director, or *clear the canvas* — sends it to the **dock** in the bottom-left instead of killing it; it keeps running there. Windows of the same kind **stack** into one rounded logo tile (site icons for browsers). Hover a stack and its tiles **slide out**; hover a tile to see a **preview** of the window as it was (a snapshot of its contents) and a ghost outline of where it sat. Click to bring it back; the small **×** on a tile closes it for good. Ask for "permanently" / "for good" and the Director closes outright.
 - **Text follows the window.** Make a window bigger and its text grows with it; make it smaller and the text shrinks (terminals, chats, browsers, notes, boards and the music player).
@@ -168,7 +201,7 @@ The GUI-chat mode needs this even more than terminals do: it runs `claude -p` (p
 - Layout, pages, notes and themes persist in local storage.
 - **Claude GUI mode** (off by default): turn it on in **Settings → Canvas** and Claude agents look exactly like the Claude Code terminal UI — the welcome box, `>` prompts, `⏺` bullets, tool calls such as `Bash(npm test)` with their `⎿` results (long output folds behind *+N lines*), red/green diffs for edits, todo checklists, the `✻` spinner, the bordered input box and slash commands (`/model`, `/effort`, `/clear`, `/resume`, `/cost`, `/help`) — but drawn as crisp HTML that scales with the window. It talks to `claude -p --output-format stream-json` and resumes the same session for every message. **Chats are saved** (`%APPDATA%\xodecode\chats`) and survive restarts.
 - Terminals render supersampled (1.5×) so text stays crisp.
-- **Backgrounds**: pick **Northern lights** (an original night-sky scene), **Sunset lake** (pixel art, drawn crisp) or your own picture in **Settings → Canvas**, with a true-to-screen preview. Pictures are never stretched. The picture always **fills the screen** behind the canvas and stays the same size however far you zoom or pan.
+- **Backgrounds**: pick **Northern lights** (an original night-sky scene), **Sunset lake** (pixel art, drawn crisp), one of four calm, dark, gently moving scenes (**Quiet nebula**, **Deep sea**, **Dusk forest**, **Midnight grid**; the motion stops if your system asks for reduced motion) or your own picture in **Settings → Canvas**, with a true-to-screen preview. Pictures are never stretched. The picture always **fills the screen** behind the canvas and stays the same size however far you zoom or pan.
 
 ## Attention
 
@@ -245,3 +278,7 @@ The renderer is plain ES modules served over a privileged `app://` protocol — 
 - Restored sessions start fresh Claude processes; saved prompts are not replayed.
 - The Director needs Claude Code and a working subscription; weekly limits apply to everything it dispatches.
 - Browser-window nodes and iPhone/Pocket pairing are not implemented.
+
+## License
+
+[MIT](LICENSE) © 2026 diddy. The built-in backgrounds are original and generated in this project (`scripts/draw-sunset.js` draws the pixel-art sunset).

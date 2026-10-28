@@ -15,6 +15,8 @@ import {
 export const GRID = 28;
 export const MIN_W = 300;
 export const MIN_H = 170;
+export const MIN_ZOOM = 0.5; // zoomed out to 2x the normal view at most
+export const MAX_ZOOM = 2.4;
 const SHAPE_MIN = 16;
 
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'diamond', 'arrow', 'line', 'pen']);
@@ -54,6 +56,19 @@ export class Canvas {
     // screen, whatever the zoom.
     this.bgEl = el('div', { class: 'world-bg', 'aria-hidden': 'true' });
     this.viewportEl.insertBefore(this.bgEl, this.worldEl);
+    // The dot grid, on its own layer so panning never restyles the app.
+    this.gridEl = el('div', { class: 'grid-layer', 'aria-hidden': 'true' });
+    this.viewportEl.insertBefore(this.gridEl, this.bgEl);
+    this._gridSize = 0;
+    // The screen size, cached: reading it every camera frame would force a
+    // style flush on each one.
+    this._screen = { w: this.viewportEl.clientWidth, h: this.viewportEl.clientHeight };
+    new ResizeObserver(() => {
+      this._screen = { w: this.viewportEl.clientWidth, h: this.viewportEl.clientHeight };
+      this._gridSize = 0;
+      this._placeGrid(true);
+      this._cull();
+    }).observe(this.viewportEl);
     this._bind();
     this._buildPages();
     this.syncActivePage();
@@ -116,19 +131,6 @@ export class Canvas {
     this.syncActivePage();
     this.updateHero();
     return page;
-  }
-
-  /** Re-create every terminal view (used when GUI mode is toggled). */
-  remountTerminals() {
-    for (const [id] of [...this.views]) {
-      const found = store.findNode(id);
-      if (!found || found.node.kind !== 'terminal') continue;
-      const pageEl = this.pageEls.get(found.page.id);
-      this.unmountNode(id);
-      this.mountNode(found.node, pageEl);
-    }
-    this.updateHero();
-    this.drawJointLines();
   }
 
   deletePage(id) {
@@ -282,6 +284,7 @@ export class Canvas {
     view.resize?.(meta.w, meta.h);
     view.redraw?.();
     this.drawJointLines();
+    this._scheduleCull();
   }
 
   /** Team colour, rank badge and team chip on a window's title bar. */
@@ -298,7 +301,8 @@ export class Canvas {
     const lead = meta.rank === 'lead';
     el.classList.add('is-joint');
     el.classList.toggle('is-lead', lead);
-    el.style.setProperty('--joint-color', joint.color || '#cfcfcf');
+    // Team UI is white everywhere; joint.color is kept in the data only.
+    el.style.setProperty('--joint-color', '#ffffff');
     if (!head) return;
     if (!chip) {
       chip = document.createElement('span');
@@ -321,8 +325,17 @@ export class Canvas {
     this.drawJointLines();
   }
 
-  /** Draw a curved line from each team's lead to every one of its workers. */
+  /** Redraw the team lines on the next frame (many callers, one redraw). */
   drawJointLines() {
+    if (this._linesFrame) return;
+    this._linesFrame = requestAnimationFrame(() => {
+      this._linesFrame = 0;
+      this._drawJointLinesNow();
+    });
+  }
+
+  /** Draw a curved line from each team's lead to every one of its workers. */
+  _drawJointLinesNow() {
     for (const page of store.pages) {
       const pageEl = this.pageEls.get(page.id);
       if (!pageEl) continue;
@@ -338,8 +351,9 @@ export class Canvas {
       const visible = page.nodes.filter((node) => node.joint && !node.parked);
       const ns = 'http://www.w3.org/2000/svg';
       for (const lead of visible.filter((node) => node.rank === 'lead')) {
-        const joint = store.joints[lead.joint];
-        const color = (joint && joint.color) || '#cfcfcf';
+        // Lines are white, like the jointed window outlines; the team colour
+        // lives on the title-bar chip.
+        const color = '#ffffff';
         const from = [lead.x + lead.w / 2, lead.y + lead.h / 2];
         const workers = visible.filter((node) => node.parentId === lead.id);
         for (const worker of workers) {
@@ -471,16 +485,23 @@ export class Canvas {
     store.emit('selection', this.selectedId);
 
     const scale = page.viewport.scale || 1;
-    const capture = (node) => {
+    // Sharp previews: a browser's page is captured at full resolution straight
+    // from its webview; other windows from the screen at up to 1600px wide.
+    const capture = async (node) => {
       const view = this.views.get(node.id);
-      if (!view || page.id !== store.page.id || !window.api.win.capture) return Promise.resolve(null);
+      if (!view || page.id !== store.page.id || !window.api.win.capture) return null;
+      const id = node.kind === 'browser' ? view.webContentsId?.() : null;
+      if (id && window.api.win.captureWeb) {
+        const shot = await window.api.win.captureWeb({ id, maxWidth: 1600 }).catch(() => null);
+        if (shot && shot.data) return `data:${shot.mime};base64,${shot.data}`;
+      }
       const rect = view.el.getBoundingClientRect();
       return window.api.win
-        .capture({ x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+        .capture({ x: rect.left, y: rect.top, width: rect.width, height: rect.height, maxWidth: 1600 })
         .catch(() => null);
     };
     // Never let a slow capture hold the animation up for long.
-    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 220));
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 450));
 
     Promise.all(list.map((node) => Promise.race([capture(node), timeout]))).then((shots) => {
       const point = this._dockPoint();
@@ -512,6 +533,7 @@ export class Canvas {
     // Settle the layout first so the window grows straight into its slot.
     this.relayout({ animate: true, page, fresh: new Set([id]) });
     this.drawJointLines();
+    if (this.layoutMode(page) === 'full') this.centerNode(id);
     if (view) {
       view.el.classList.remove('is-parked');
       view.el.style.zIndex = String(node.z);
@@ -527,15 +549,33 @@ export class Canvas {
   }
 
   /** The rectangles the given windows should occupy right now. */
+  /** The arrangement in use: "grid" means full-size windows while that setting is on. */
+  layoutMode(page = store.page) {
+    const mode = page.layout || 'grid';
+    return mode === 'grid' && store.state.settings.fullSizeWindows !== false ? 'full' : mode;
+  }
+
+  /**
+   * The frame windows are tiled in, fixed at 100% zoom so windows are the same
+   * size at any zoom. Full-size windows anchor to the first window instead of
+   * the view, so panning around never shifts the grid.
+   */
+  _frameFor(page, nodes) {
+    const frame = this.layoutFrame();
+    const first = nodes[0];
+    if (this.layoutMode(page) !== 'full' || !first) return frame;
+    const inset = LAYOUT.margin;
+    return { x: first.x - LAYOUT.insets.left - inset, y: first.y - LAYOUT.insets.top - inset, w: frame.w, h: frame.h };
+  }
+
   planLayout(page = store.page) {
     const nodes = this.tileableNodes(page);
     const rects = tileRects({
       count: nodes.length,
-      // Fixed 100%-zoom frame: windows are the same size at any zoom.
-      view: this.layoutFrame(),
+      view: this._frameFor(page, nodes),
       scale: 1,
       config: LAYOUT,
-      mode: page.layout || 'grid',
+      mode: this.layoutMode(page),
       mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
     });
     return nodes.map((node, index) => ({ node, rect: rects[index] })).filter((item) => item.rect);
@@ -749,6 +789,8 @@ export class Canvas {
     // Re-tile the whole page so the new window and its neighbours settle into
     // a clean, evenly sized grid.
     if (tileable && !silent) this.relayout({ animate: true });
+    // Full-size windows land beside the others: glide over to the new one.
+    if (tileable && !silent && focus && this.layoutMode(page) === 'full') this.centerNode(node.id);
     this.updateHero();
     if (focus) {
       this.focusNode(node.id);
@@ -764,11 +806,10 @@ export class Canvas {
     const nodes = this.tileableNodes(page);
     const rects = tileRects({
       count: nodes.length + 1,
-      // Fixed 100%-zoom frame: windows are the same size at any zoom.
-      view: this.layoutFrame(),
+      view: this._frameFor(page, nodes),
       scale: 1,
       config: LAYOUT,
-      mode: page.layout || 'grid',
+      mode: this.layoutMode(page),
       mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
     });
     return rects[rects.length - 1] || null;
@@ -956,19 +997,91 @@ export class Canvas {
     this.worldEl.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.scale})`;
     // Cheap bitmap scaling while moving; a sharp repaint once it settles.
     this.viewportEl.classList.add('is-moving');
+    this._moving = true;
     clearTimeout(this._settleTimer);
-    this._settleTimer = setTimeout(() => this.viewportEl.classList.remove('is-moving'), 180);
-    const size = GRID * vp.scale;
-    this.viewportEl.style.setProperty('--grid', `${size}px`);
-    this.viewportEl.style.setProperty('--grid-x', `${vp.x}px`);
-    this.viewportEl.style.setProperty('--grid-y', `${vp.y}px`);
+    this._settleTimer = setTimeout(() => {
+      this._moving = false;
+      this.viewportEl.classList.remove('is-moving');
+      this._placeGrid(true);
+    }, 180);
+    this._placeGrid(false);
+    this._cull();
 
     // Bitmap-backed views (terminals) re-render at the new scale so their
     // glyphs stay sharp instead of being stretched.
+    // Off-screen ones wait until they come back into view.
     if (this.appliedScale !== vp.scale) {
       this.appliedScale = vp.scale;
-      for (const view of this.views.values()) view.setZoom?.(vp.scale);
+      for (const view of this.views.values()) {
+        if (view._culled) view._pendingZoom = vp.scale;
+        else view.setZoom?.(vp.scale);
+      }
     }
+  }
+
+  /**
+   * Slide the dot grid by less than one cell (a compositor-only transform).
+   * While zooming it is scaled instead of redrawn, and only repaints every
+   * 25% of zoom change; once the camera settles (`exact`) it repaints sharp.
+   */
+  _placeGrid(exact) {
+    const vp = store.page.viewport;
+    const size = GRID * vp.scale;
+    const grid = this.gridEl.style;
+    const painted = this._gridSize;
+    const ratio = painted ? size / painted : 0;
+    if (!painted || exact || ratio < 0.8 || ratio > 1.25) {
+      if (size !== painted) {
+        this._gridSize = size;
+        grid.backgroundSize = `${size}px ${size}px`;
+        // Big enough to cover the screen at any in-between scale.
+        grid.width = `${this._screen.w * 1.3 + size * 2}px`;
+        grid.height = `${this._screen.h * 1.3 + size * 2}px`;
+      }
+    }
+    const k = size / this._gridSize;
+    const ox = (((vp.x % size) + size) % size) - size;
+    const oy = (((vp.y % size) + size) % size) - size;
+    grid.transform = k === 1 ? `translate3d(${ox}px, ${oy}px, 0)` : `translate3d(${ox}px, ${oy}px, 0) scale(${k})`;
+  }
+
+  /**
+   * Windows well outside the screen are not drawn at all (visibility hidden):
+   * their terminals and pages stop painting and the compositor has less to
+   * move. A margin of half a screen keeps them drawn just before they scroll
+   * in. Music players are never culled, so playback is never interrupted.
+   */
+  _cull() {
+    const page = store.page;
+    const vp = page.viewport;
+    const { w, h } = this._screen;
+    const mx = w * 0.5;
+    const my = h * 0.5;
+    for (const node of page.nodes) {
+      const view = this.views.get(node.id);
+      if (!view || node.kind === 'music') continue;
+      const left = node.x * vp.scale + vp.x;
+      const top = node.y * vp.scale + vp.y;
+      const off =
+        left > w + mx || top > h + my || left + node.w * vp.scale < -mx || top + node.h * vp.scale < -my;
+      if (off !== Boolean(view._culled)) {
+        view._culled = off;
+        view.el.classList.toggle('is-culled', off);
+        if (!off && view._pendingZoom !== undefined) {
+          view.setZoom?.(view._pendingZoom);
+          view._pendingZoom = undefined;
+        }
+      }
+    }
+  }
+
+  /** Re-check culling once windows have moved (coalesced to one per frame). */
+  _scheduleCull() {
+    if (this._cullFrame) return;
+    this._cullFrame = requestAnimationFrame(() => {
+      this._cullFrame = 0;
+      this._cull();
+    });
   }
 
   screenToWorld(clientX, clientY) {
@@ -986,7 +1099,7 @@ export class Canvas {
     const to = {
       x: Number.isFinite(target.x) ? target.x : vp.x,
       y: Number.isFinite(target.y) ? target.y : vp.y,
-      scale: Number.isFinite(target.scale) ? clamp(target.scale, 0.3, 2.4) : vp.scale,
+      scale: Number.isFinite(target.scale) ? clamp(target.scale, MIN_ZOOM, MAX_ZOOM) : vp.scale,
     };
     if (prefersReducedMotion() || duration <= 0) {
       Object.assign(vp, to);
@@ -1037,7 +1150,7 @@ export class Canvas {
     const maxY = Math.max(...nodes.map((n) => n.y + n.h));
     const cw = this.viewportEl.clientWidth;
     const ch = this.viewportEl.clientHeight;
-    const scale = clamp(Math.min((cw - 120) / (maxX - minX), (ch - 200) / (maxY - minY)), 0.3, 1.4);
+    const scale = clamp(Math.min((cw - 120) / (maxX - minX), (ch - 200) / (maxY - minY)), MIN_ZOOM, 1.4);
     this.animateViewport({
       scale,
       x: cw / 2 - ((minX + maxX) / 2) * scale,
@@ -1057,7 +1170,7 @@ export class Canvas {
   zoomAt(clientX, clientY, factor) {
     this.stopViewportAnimation();
     const vp = store.page.viewport;
-    const next = clamp(vp.scale * factor, 0.3, 2.4);
+    const next = clamp(vp.scale * factor, MIN_ZOOM, MAX_ZOOM);
     const k = next / vp.scale;
     vp.x = clientX - (clientX - vp.x) * k;
     vp.y = clientY - (clientY - vp.y) * k;
@@ -1070,7 +1183,7 @@ export class Canvas {
     const vp = store.page.viewport;
     const cx = anchor?.x ?? this.viewportEl.clientWidth / 2;
     const cy = anchor?.y ?? this.viewportEl.clientHeight / 2;
-    const next = clamp(scale, 0.3, 2.4);
+    const next = clamp(scale, MIN_ZOOM, MAX_ZOOM);
     const k = next / vp.scale;
     this.animateViewport(
       { scale: next, x: cx - (cx - vp.x) * k, y: cy - (cy - vp.y) * k },
@@ -1104,7 +1217,7 @@ export class Canvas {
         (this.viewportEl.clientWidth - pad) / meta.w,
         (this.viewportEl.clientHeight - pad * 1.6) / meta.h
       ),
-      0.4,
+      MIN_ZOOM,
       1.6
     );
     this.animateViewport({
@@ -1436,6 +1549,8 @@ export class Canvas {
     const originH = meta.h;
     const minW = meta.kind === 'shape' ? SHAPE_MIN : MIN_W;
     const minH = meta.kind === 'shape' ? SHAPE_MIN : MIN_H;
+    const maxW = meta.kind === 'shape' ? Infinity : LAYOUT.maxW;
+    const maxH = meta.kind === 'shape' ? Infinity : LAYOUT.maxH;
     view.el.classList.add('is-resizing');
     try {
       view.el.setPointerCapture(event.pointerId);
@@ -1444,8 +1559,8 @@ export class Canvas {
     }
 
     const move = (ev) => {
-      meta.w = Math.max(minW, originW + (ev.clientX - startX) / scale);
-      meta.h = Math.max(minH, originH + (ev.clientY - startY) / scale);
+      meta.w = Math.min(maxW, Math.max(minW, originW + (ev.clientX - startX) / scale));
+      meta.h = Math.min(maxH, Math.max(minH, originH + (ev.clientY - startY) / scale));
       this.applyGeometry(meta);
     };
     const up = () => {

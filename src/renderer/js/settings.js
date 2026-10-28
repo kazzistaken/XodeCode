@@ -142,6 +142,15 @@ export function initSettings(ctx) {
           );
         }
         body.append(grid);
+        body.append(
+          groupLabel('Look'),
+          settingRow({
+            title: 'Flat colors',
+            desc: 'Swap the frosted-glass look for plain solid colors: no see-through panels and no blur.',
+            value: Boolean(store.state.settings.flatUi),
+            onChange: (value) => store.setSetting('flatUi', value),
+          })
+        );
       }
 
       if (tab.id === 'canvas') {
@@ -286,19 +295,25 @@ export function initSettings(ctx) {
             },
           }),
           settingRow({
+            title: 'Full-size windows',
+            desc: 'Every app window is as big as the screen and they sit side by side; zoom out to see them all. Turn off to shrink windows so they all fit on one screen.',
+            value: store.state.settings.fullSizeWindows !== false,
+            onChange: (value) => {
+              store.setSetting('fullSizeWindows', value);
+              ctx.canvas.relayout?.({ force: true, animate: true });
+            },
+          }),
+          settingRow({
             title: 'Snap to grid',
             desc: 'Windows settle onto the dot grid as you move them.',
             value: store.state.settings.snapToGrid,
             onChange: (value) => store.setSetting('snapToGrid', value),
           }),
           settingRow({
-            title: 'Claude GUI mode',
-            desc: 'Render Claude agents in the Claude Code look — tool calls, diffs, todos, slash commands — as crisp, scalable HTML instead of a raw terminal.',
-            value: store.state.settings.guiTerminals,
-            onChange: (value) => {
-              store.setSetting('guiTerminals', value);
-              ctx.canvas.remountTerminals?.();
-            },
+            title: 'Windows voice typing for dictation',
+            desc: 'The mic (Ctrl+Shift+M) opens Windows voice typing (Win+H), which types into the prompt box you are using. Turn off to use the built-in engine instead (less accurate).',
+            value: store.state.settings.dictation !== 'builtin',
+            onChange: (value) => store.setSetting('dictation', value ? 'windows' : 'builtin'),
           }),
           groupLabel('Notifications'),
           settingRow({

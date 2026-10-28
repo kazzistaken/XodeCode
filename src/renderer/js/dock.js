@@ -7,9 +7,9 @@ import { store } from './store.js';
  *
  * Closing a window (or clearing the canvas) sends it here instead of killing
  * it. Windows of the same kind stack into one rounded logo tile; hovering a
- * stack slides its tiles out, hovering a tile previews the window as it was
- * (a snapshot plus a ghost outline of where it sat), clicking brings it back,
- * and the × on a tile closes it for good.
+ * stack fans its tiles upward, hovering a tile shows the window as it was,
+ * right on the canvas where it sat (or centred, if that spot is off screen),
+ * clicking brings it back, and the × on a tile closes it for good.
  */
 
 const GROUP_ORDER = ['agent', 'terminal', 'browser', 'music', 'board', 'note'];
@@ -57,72 +57,63 @@ function labelFor(node) {
 
 export function initDock(ctx) {
   const dock = $('#dock');
-  const preview = el('div', { class: 'dock-preview', 'aria-hidden': 'true' });
   const ghost = el('div', { class: 'dock-ghost', 'aria-hidden': 'true' });
-  document.body.append(preview, ghost);
+  document.body.append(ghost);
   let seen = new Set();
   let hideTimer = null;
 
   /* ------------------------------ preview ------------------------------ */
 
-  function showPreview(node, tile) {
+  /** The window as it was, drawn on the canvas where it sat. */
+  function showPreview(node) {
     clearTimeout(hideTimer);
     const shot = ctx.canvas.dockPreview(node.id);
-    const body = shot?.src
-      ? el('img', { class: 'dock-preview-shot', src: shot.src, alt: '' })
-      : el('pre', {
-          class: 'dock-preview-text',
-          text:
-            shot?.text ||
-            (node.kind === 'note' ? node.payload?.text : '') ||
-            node.payload?.url ||
-            node.title ||
-            'Nothing to show yet.',
-        });
-    preview.replaceChildren(
+    const vp = store.page.viewport;
+    let x = node.x * vp.scale + vp.x;
+    let y = node.y * vp.scale + vp.y;
+    let w = node.w * vp.scale;
+    let h = node.h * vp.scale;
+    const fullyOnScreen = x >= 0 && y >= 0 && x + w <= window.innerWidth && y + h <= window.innerHeight;
+    if (!fullyOnScreen || w < 160) {
+      // Off screen (or tiny when zoomed out): show it centred instead.
+      const fit = Math.min((window.innerWidth * 0.7) / node.w, (window.innerHeight * 0.7) / node.h, 1);
+      w = node.w * fit;
+      h = node.h * fit;
+      x = (window.innerWidth - w) / 2;
+      y = (window.innerHeight - h) / 2;
+    }
+    ghost.style.left = `${x}px`;
+    ghost.style.top = `${y}px`;
+    ghost.style.width = `${w}px`;
+    ghost.style.height = `${h}px`;
+    ghost.style.backgroundImage = shot?.src ? `url("${shot.src}")` : 'none';
+    const parts = [
+      shot?.src
+        ? null
+        : el('pre', {
+            class: 'dock-ghost-text',
+            text:
+              shot?.text ||
+              (node.kind === 'note' ? node.payload?.text : '') ||
+              node.payload?.url ||
+              node.title ||
+              'Nothing to show yet.',
+          }),
       el(
         'div',
-        { class: 'dock-preview-head' },
+        { class: 'dock-ghost-label' },
         el('span', { class: `dock-preview-logo is-${groupOf(node)}` }, logoFor(node)),
-        el('span', { class: 'dock-preview-title', text: truncate(labelFor(node), 60) })
+        el('span', { text: truncate(labelFor(node), 60) }),
+        el('i', { text: 'click to open · × closes for good' })
       ),
-      body,
-      el('div', { class: 'dock-preview-hint', text: 'Click to open · × to close for good' })
-    );
-
-    // Sit the card beside the tile, kept on screen.
-    const rect = tile.getBoundingClientRect();
-    preview.classList.add('is-visible');
-    const width = preview.offsetWidth;
-    const height = preview.offsetHeight;
-    const left = Math.min(window.innerWidth - width - 12, rect.right + 14);
-    const top = Math.max(52, Math.min(window.innerHeight - height - 12, rect.top + rect.height / 2 - height / 2));
-    preview.style.left = `${left}px`;
-    preview.style.top = `${top}px`;
-
-    // Ghost outline where the window sat on the canvas.
-    const vp = store.page.viewport;
-    const x = node.x * vp.scale + vp.x;
-    const y = node.y * vp.scale + vp.y;
-    const w = node.w * vp.scale;
-    const h = node.h * vp.scale;
-    const onScreen = x < window.innerWidth && y < window.innerHeight && x + w > 0 && y + h > 0;
-    ghost.classList.toggle('is-visible', onScreen);
-    if (onScreen) {
-      ghost.style.left = `${x}px`;
-      ghost.style.top = `${y}px`;
-      ghost.style.width = `${w}px`;
-      ghost.style.height = `${h}px`;
-      ghost.style.backgroundImage = shot?.src ? `url("${shot.src}")` : 'none';
-    }
+    ];
+    ghost.replaceChildren(...parts.filter(Boolean));
+    ghost.classList.add('is-visible');
   }
 
   function hidePreview() {
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => {
-      preview.classList.remove('is-visible');
-      ghost.classList.remove('is-visible');
-    }, 60);
+    hideTimer = setTimeout(() => ghost.classList.remove('is-visible'), 60);
   }
 
   /* ------------------------------- tiles ------------------------------- */
@@ -153,7 +144,7 @@ export function initDock(ctx) {
           button.classList.add('is-opening');
           ctx.canvas.restoreNode(node.id, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
         },
-        onpointerenter: () => showPreview(node, button),
+        onpointerenter: () => showPreview(node),
         onpointerleave: hidePreview,
       },
       logoFor(node),

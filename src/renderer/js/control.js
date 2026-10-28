@@ -6,6 +6,7 @@ import { openBoard } from './board.js';
 import { truncate, uid } from './util.js';
 import { TILEABLE } from './layout.js';
 import { setBackgroundPreset } from './backgrounds.js';
+import { agentToolHandle } from './agenttools.js';
 import {
   RANK_LABEL,
   teamMembers,
@@ -1040,6 +1041,8 @@ function describeNode(node, ctx, page) {
   const url = node.payload && node.payload.url;
   if (url) parts.push(truncate(url, 70));
   const extra = [];
+  const owner = node.payload && node.payload.ownerId ? store.findNode(node.payload.ownerId)?.node : null;
+  if (owner) extra.push(`opened by ${owner.callSign}`);
   if (kindOf(node) === 'agent') {
     extra.push(node.status || 'idle');
     if (node.model) extra.push(`${String(node.model).replace(/^claude-/, '')}/${node.effort || 'medium'}`);
@@ -1297,10 +1300,12 @@ async function teamHandle(ctx, method, params, callerId) {
 export function initControl(ctx) {
   window.api.control.onRequest(async ({ id, method, params, caller }) => {
     try {
-      // A team agent's token only ever reaches the team tools.
-      const result = caller
-        ? await teamHandle(ctx, method, params || {}, caller)
-        : await handle(ctx, method, params || {});
+      // An agent's token only ever reaches its own tools: team.* or tool.*.
+      const result = !caller
+        ? await handle(ctx, method, params || {})
+        : String(method).startsWith('tool.')
+          ? await agentToolHandle(ctx, method, params || {}, caller)
+          : await teamHandle(ctx, method, params || {}, caller);
       window.api.control.respond({ id, result });
     } catch (error) {
       window.api.control.respond({ id, error: String((error && error.message) || error) });

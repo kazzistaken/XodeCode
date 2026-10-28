@@ -538,7 +538,6 @@ async function runSmoke(mainWindow, basePath, controlInfo = {}) {
       console.log(`SMOKE_JOINT_VISUAL ${JSON.stringify(jointNodes)}`);
 
       /* ---- Claude GUI mode (chat) ---- */
-      await run(`(() => { window.__xo.store.setSetting('guiTerminals', true); return true; })()`);
       const guiNode = await run(`(() => {
         const node = window.__xo.spawnClaude('');
         return { id: node.id };
@@ -573,7 +572,6 @@ async function runSmoke(mainWindow, basePath, controlInfo = {}) {
         };
       })()`);
       console.log(`SMOKE_GUI_REPLY ${JSON.stringify(guiReply)}`);
-      await run(`(() => { window.__xo.store.setSetting('guiTerminals', false); return true; })()`);
 
       /* ---- music player ---- */
       const cliMusic = await runCli(['music'], controlInfo.url, controlInfo.token);

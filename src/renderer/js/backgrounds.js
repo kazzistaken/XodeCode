@@ -23,6 +23,39 @@ export const BACKGROUNDS = [
     pixelated: true,
     base: '#1a0f24',
   },
+  // Calm, dark scenes with slight motion (stilled by prefers-reduced-motion).
+  {
+    id: 'nebula',
+    label: 'Quiet nebula',
+    src: 'app://xodecode/assets/backgrounds/nebula.svg',
+    fit: 'cover',
+    pixelated: false,
+    base: '#05061a',
+  },
+  {
+    id: 'deepsea',
+    label: 'Deep sea',
+    src: 'app://xodecode/assets/backgrounds/deepsea.svg',
+    fit: 'cover',
+    pixelated: false,
+    base: '#02060d',
+  },
+  {
+    id: 'dusk-forest',
+    label: 'Dusk forest',
+    src: 'app://xodecode/assets/backgrounds/dusk-forest.svg',
+    fit: 'cover',
+    pixelated: false,
+    base: '#0c0914',
+  },
+  {
+    id: 'midnight-grid',
+    label: 'Midnight grid',
+    src: 'app://xodecode/assets/backgrounds/midnight-grid.svg',
+    fit: 'cover',
+    pixelated: false,
+    base: '#03040b',
+  },
 ];
 
 export function findBackground(id) {

@@ -230,7 +230,7 @@ function buildTeamTree(ctx, close) {
     count.textContent = String(teams.length);
     list.replaceChildren(
       ...teams.map(({ joint, lead, workers }) => {
-        const color = joint.color || '#cfcfcf';
+        const color = '#ffffff'; // team UI is white, not the team colour
         return el(
           'div',
           { class: 'dx-team', style: { '--joint-color': color } },

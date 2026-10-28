@@ -146,6 +146,7 @@ function createBrowserView(meta, canvas) {
   const host = el('div', { class: 'browser-host' }, webview);
   chrome.body.append(toolbar, host);
 
+
   function setUrl(next, { load = false } = {}) {
     url = next;
     meta.payload.url = next;
@@ -175,10 +176,31 @@ function createBrowserView(meta, canvas) {
     store.save();
   }
 
-  webview.addEventListener('did-start-loading', () => chrome.root.classList.add('is-loading'));
+  // Agent tools wait for a page to finish loading before reading it.
+  let loading = true;
+  const loadWaiters = new Set();
+  function waitForLoad(timeout = 15000) {
+    if (!loading && domReady) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        loadWaiters.delete(done);
+        resolve();
+      };
+      const timer = setTimeout(done, timeout);
+      loadWaiters.add(done);
+    });
+  }
+
+  webview.addEventListener('did-start-loading', () => {
+    loading = true;
+    chrome.root.classList.add('is-loading');
+  });
   webview.addEventListener('did-stop-loading', () => {
+    loading = false;
     chrome.root.classList.remove('is-loading');
     updateNav();
+    for (const done of [...loadWaiters]) done();
   });
   webview.addEventListener('did-navigate', (event) => {
     setUrl(event.url);
@@ -236,6 +258,15 @@ function createBrowserView(meta, canvas) {
       chrome.subEl.textContent = meta.title || hostOf(url) || 'Browser';
     },
     navigate: (next) => go(next),
+    // For agent tools: run code in the page, wait for loads, history, capture.
+    exec: (code) => webview.executeJavaScript(code, true),
+    waitForLoad,
+    history: (step) => {
+      if (step === 'back') webview.goBack?.();
+      else if (step === 'forward') webview.goForward?.();
+      else webview.reload?.();
+    },
+    webContentsId: () => (domReady ? webview.getWebContentsId() : null),
     setContentScale: (scale) => {
       if (Math.abs(scale - contentScale) < 0.01) return;
       contentScale = scale;
@@ -267,12 +298,17 @@ registerNodeType('browser', createBrowserView);
 export function openBrowser(canvas, url, options = {}) {
   const target = normalizeUrl(url);
   const label = options.title || hostOf(target) || 'Browser';
-  return canvas.createNode({
-    kind: 'browser',
-    w: options.w ?? 820,
-    h: options.h ?? 560,
-    callSign: label,
-    title: label,
-    payload: { url: target },
-  });
+  return canvas.createNode(
+    {
+      kind: 'browser',
+      w: options.w ?? 820,
+      h: options.h ?? 560,
+      callSign: label,
+      title: label,
+      // ownerId: the agent window that opened it (agent tools only).
+      payload: options.ownerId ? { url: target, ownerId: options.ownerId } : { url: target },
+    },
+    // An agent opening a browser must not steal the user's keyboard focus.
+    { focus: options.focus !== false }
+  );
 }

@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   voice: {
     start: () => ipcRenderer.invoke('voice:start'),
     stop: () => ipcRenderer.invoke('voice:stop'),
+    typing: () => ipcRenderer.invoke('voice:typing'),
     onText: (callback) => subscribe('voice:text', callback),
     onState: (callback) => subscribe('voice:state', callback),
   },
@@ -43,6 +44,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   claude: {
     send: (payload) => ipcRenderer.invoke('claude:send', payload),
+    authStatus: () => ipcRenderer.invoke('claude:auth-status'),
+    setupConsole: (action) => ipcRenderer.invoke('claude:setup-console', { action }),
     cancel: (payload) => ipcRenderer.send('claude:cancel', payload),
     onEvent: (callback) => subscribe('claude:event', callback),
   },
@@ -68,6 +71,7 @@ contextBridge.exposeInMainWorld('api', {
     close: () => ipcRenderer.invoke('win:close'),
     reload: () => ipcRenderer.send('win:reload'),
     capture: (rect) => ipcRenderer.invoke('win:capture', rect),
+    captureWeb: (payload) => ipcRenderer.invoke('web:capture', payload),
     onMaximized: (callback) => subscribe('win:maximized', callback),
   },
   sys: {

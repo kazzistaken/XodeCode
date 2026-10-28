@@ -60,7 +60,7 @@ export function buildHierarchySheet(ctx, close) {
       {
         class: `hv-card is-${rank}`,
         type: 'button',
-        style: { '--joint-color': joint.color || '#cfcfcf' },
+        style: { '--joint-color': '#ffffff' },
         title: `Go to ${node.callSign}`,
         onclick: () => {
           ctx.canvas.focusAgent(node.id);
@@ -134,7 +134,7 @@ export function buildHierarchySheet(ctx, close) {
       const count = (status) => tasks.filter((task) => task.status === status).length;
       return el(
         'div',
-        { class: 'hv-team', style: { '--joint-color': joint.color || '#cfcfcf' } },
+        { class: 'hv-team', style: { '--joint-color': '#ffffff' } },
         el(
           'div',
           { class: 'hv-team-head' },

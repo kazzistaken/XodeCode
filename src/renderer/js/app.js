@@ -1,7 +1,7 @@
 import { $, el } from './util.js';
 import { store } from './store.js';
 import { Canvas } from './canvas.js';
-import { spawnClaude, spawnShell } from './terminal.js';
+import { spawnClaude, spawnShell, writeToNode } from './terminal.js';
 import { openBrowser } from './browser.js';
 import { openMusic } from './music.js';
 import { openBoard } from './board.js';
@@ -13,6 +13,7 @@ import { initQuick } from './quick.js';
 import { initVoice } from './voice.js';
 import { initNotifications } from './notifications.js';
 import { initDock } from './dock.js';
+import { initOnboarding } from './onboarding.js';
 import { initHierarchy } from './hierarchy.js';
 import { buildHierarchySheet } from './hierarchyview.js';
 import { initSettings } from './settings.js';
@@ -77,6 +78,14 @@ function applyBackground() {
 
 applyBackground();
 store.on('settings', applyBackground);
+
+// Glass is the default look; "Flat colors" swaps it for solid surfaces.
+function applyLook() {
+  document.documentElement.classList.toggle('ui-flat', Boolean(store.state.settings.flatUi));
+}
+
+applyLook();
+store.on('settings', applyLook);
 
 const canvas = new Canvas({ viewport: $('#viewport'), world: $('#world') });
 canvas.onHeroAction = () => pickPageWorkspace();
@@ -187,6 +196,10 @@ initMenubar(ctx);
 canvas.mountAll();
 initControl(ctx);
 initHierarchy(canvas);
+// First-run setup and the guided tour (both replayable from Help).
+const onboarding = initOnboarding(ctx);
+ctx.startSetup = () => onboarding.start();
+ctx.startTour = () => onboarding.tour();
 
 /* ----------------------------- director ----------------------------- */
 
@@ -354,6 +367,8 @@ window.__xo = {
   director,
   spawnClaude: (prompt = '') => spawnClaude(canvas, prompt),
   spawnShell: () => spawnShell(canvas),
+  // Test hook: type a line into a terminal session.
+  writeTerminal: (id, text) => writeToNode(id, text),
   openBrowser: (url) => openBrowser(canvas, url),
   openMusic: (options) => openMusic(canvas, options),
   openBoard: (options) => openBoard(canvas, options),

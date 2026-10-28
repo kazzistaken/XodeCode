@@ -295,11 +295,23 @@ export function initQuick(ctx) {
 
     // Background
     match = q.match(
-      /^(?:set|change|switch|use|make)\s+(?:the\s+)?(?:background|wallpaper)(?:\s+(?:to|as))?\s+(?:the\s+)?(sunset|sunset lake|aurora|northern lights|night sky|dots|dot grid|none|nothing|default)$/
+      /^(?:set|change|switch|use|make)\s+(?:the\s+)?(?:background|wallpaper)(?:\s+(?:to|as))?\s+(?:the\s+)?(sunset|sunset lake|aurora|northern lights|night sky|quiet nebula|nebula|space|deep sea|deepsea|ocean|underwater|dusk forest|dusk-forest|forest|midnight grid|midnight-grid|midnight|dots|dot grid|none|nothing|default)$/
     );
     if (match) {
       const word = match[1];
-      const id = word.startsWith('sunset') ? 'sunset' : /aurora|northern|night/.test(word) ? 'aurora' : 'none';
+      const id = word.startsWith('sunset')
+        ? 'sunset'
+        : /nebula|space/.test(word)
+          ? 'nebula'
+          : /sea|ocean|underwater/.test(word)
+            ? 'deepsea'
+            : /forest/.test(word)
+              ? 'dusk-forest'
+              : /midnight/.test(word)
+                ? 'midnight-grid'
+                : /aurora|northern|night/.test(word)
+                  ? 'aurora'
+                  : 'none';
       return () => {
         const preset = setBackgroundPreset(id);
         return preset ? `Background: ${preset.label}` : 'Background: dot grid';

@@ -24,6 +24,10 @@ export const LAYOUT = {
   margin: 34, // space between the windows and the usable area (screen px)
   minW: 360, // smallest width a tiled window may take
   minH: 260, // smallest height a tiled window may take
+  maxW: 1920, // largest a window may be (world units), manual or tiled
+  maxH: 1080,
+  idealW: 1200, // size tiles keep until the canvas has no room left
+  idealH: 720,
   maxCols: 4, // never go wider than this many columns
   aspect: 1.55, // the w/h ratio a tile would like to have
   // Floating chrome plus a generous border all round, so the windows sit
@@ -52,10 +56,29 @@ export const LAYOUT_MODES = ['grid', 'columns', 'rows', 'focus'];
  * @param {{ count: number, view: {x:number,y:number,w:number,h:number}, scale?: number, config?: object, mode?: string, mainIndex?: number }} args
  * @returns {Array<{x:number,y:number,w:number,h:number}>}
  */
-export function tileRects({ count, view, scale = 1, config = LAYOUT, mode = 'grid', mainIndex = 0 } = {}) {
+export function tileRects(args = {}) {
+  const { config = LAYOUT } = args;
+  const { maxW, maxH } = { ...LAYOUT, ...config };
+  // Cells keep dividing the whole canvas; a cell bigger than the cap (few
+  // windows) just holds a capped window centred inside it.
+  return tileCells(args).map((r) => {
+    const w = Math.min(r.w, maxW);
+    const h = Math.min(r.h, maxH);
+    return { x: Math.round(r.x + (r.w - w) / 2), y: Math.round(r.y + (r.h - h) / 2), w, h };
+  });
+}
+
+function tileCells({ count, view, scale = 1, config = LAYOUT, mode = 'grid', mainIndex = 0 } = {}) {
   const n = Math.max(0, Math.floor(count || 0));
   if (!n || !view) return [];
+  // Whatever the arrangement, windows keep their comfortable size while they
+  // all fit; columns/rows/focus only divide the canvas once it is full.
+  if (mode !== 'full') {
+    const roomy = gridRects({ n, view, scale, config, onlyIdeal: true });
+    if (roomy) return roomy;
+  }
   const area = usableArea(view, scale, config);
+  if (mode === 'full') return fullRects(area, n);
   if (n > 1 && mode === 'columns') {
     const rects = strip(area, n, 'x');
     if (rects[0].w >= area.minW * 0.75) return rects;
@@ -86,6 +109,28 @@ function usableArea(view, scale, config) {
     minW,
     minH,
   };
+}
+
+/**
+ * Full-size windows: every window is as big as the screen at 100% zoom, laid
+ * out in a near-square grid. Nothing shrinks as windows are added; zoom out
+ * to see them all.
+ */
+function fullRects(area, n) {
+  const cols = Math.ceil(Math.sqrt(n));
+  const g = area.g * 3;
+  const rects = [];
+  for (let i = 0; i < n; i += 1) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    rects.push({
+      x: Math.round(area.x + col * (area.w + g)),
+      y: Math.round(area.y + row * (area.h + g)),
+      w: Math.round(area.w),
+      h: Math.round(area.h),
+    });
+  }
+  return rects;
 }
 
 /** n equal windows in one row (axis "x") or one column (axis "y"). */
@@ -137,9 +182,9 @@ function focusRects(area, n, mainIndex) {
   return rects;
 }
 
-function gridRects({ n, view, scale, config }) {
+function gridRects({ n, view, scale, config, onlyIdeal = false }) {
 
-  const { gap, margin, minW, minH, maxCols, aspect, insets } = { ...LAYOUT, ...config };
+  const { gap, margin, minW, minH, maxCols, aspect, insets, idealW, idealH } = { ...LAYOUT, ...config };
   const s = scale > 0 ? scale : 1;
   // Screen-space spacing becomes world-space spacing at the current zoom.
   const g = gap / s;
@@ -176,6 +221,30 @@ function gridRects({ n, view, scale, config }) {
     all.push(candidate);
     if (!candidate.tooSmall) fitting.push(candidate);
   }
+
+  // Windows keep their comfortable size while they all fit; they only start
+  // shrinking (dividing the canvas) once there is no room left.
+  const roomy = all.filter((c) => c.cols * idealW + (c.cols - 1) * g <= W + 1 && c.rows * idealH + (c.rows - 1) * g <= H + 1);
+  if (roomy.length) {
+    const pick = roomy.reduce((a, b) => (b.score < a.score ? b : a));
+    const rows = pick.rows;
+    const blockH = rows * idealH + (rows - 1) * g;
+    const rects = [];
+    for (let i = 0; i < n; i += 1) {
+      const row = Math.floor(i / pick.cols);
+      const col = i % pick.cols;
+      const inRow = Math.min(pick.cols, n - row * pick.cols);
+      const rowWidth = inRow * idealW + (inRow - 1) * g;
+      rects.push({
+        x: originX + (W - rowWidth) / 2 + col * (idealW + g),
+        y: originY + (H - blockH) / 2 + row * (idealH + g),
+        w: idealW,
+        h: idealH,
+      });
+    }
+    return rects;
+  }
+  if (onlyIdeal) return null;
 
   let pool = fitting;
   if (!pool.length) {

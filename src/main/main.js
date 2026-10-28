@@ -1,9 +1,17 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, net, protocol, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, net, protocol, shell, clipboard, webContents } = require('electron');
 
 // Dev/test hook: run against a throwaway profile instead of the real one.
 if (process.env.XODECODE_USERDATA) app.setPath('userData', process.env.XODECODE_USERDATA);
+// The stress test must never start a Claude process (Director, chats or agents).
+const NO_CLAUDE = ['stress', 'onboard'].includes(process.env.XODECODE_TEST_KIND);
+if (NO_CLAUDE) {
+  // Measure real frames: never throttle the test window when it is covered.
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+}
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -71,8 +79,14 @@ const chatsDir = () => path.join(userDataDir(), 'chats');
 const chatFile = (id) => (/^[\w-]+$/.test(String(id ?? '')) ? path.join(chatsDir(), `${id}.json`) : null);
 const MCP_PATH = path.join(ROOT, 'bin', 'xode-mcp.js');
 const agentsDir = () => path.join(userDataDir(), 'agents');
-// Team agents reach the app through an MCP server named "team".
-const TEAM_TOOLS = 'mcp__team';
+// Every Claude agent reaches the app through its own MCP server named "xode".
+const AGENT_TOOLS = 'mcp__xode';
+const AGENT_TOOLS_HINT =
+  'You are running inside XodeCode, a canvas of app windows. Your xode tools (mcp__xode__*) let you' +
+  ' see the canvas, open browser windows on it, navigate, read pages, take screenshots, click, type and' +
+  ' run JavaScript in browsers you opened, and pin notes. Use a browser to check web work you build' +
+  ' (open its local URL, screenshot it, fix what looks wrong). Only windows you opened are yours to' +
+  " control; leave the user's and other agents' windows alone.";
 const jointsDir = () => path.join(userDataDir(), 'joints');
 const jointContextFile = (id) => path.join(jointsDir(), `${String(id).replace(/[^\w.-]/g, '')}.md`);
 
@@ -225,7 +239,7 @@ Pages and app
 - {op:"page", index} · {op:"page", add:true, name?} · {op:"page", close:index} ·
   {op:"page", rename:index, name}
 - {op:"workspace", path} · {op:"theme", id:"graphite"|"slate"|"ash"} · {op:"notify", text}
-- {op:"background", id:"aurora"|"sunset"|"none"}  switch the canvas background.
+- {op:"background", id:"aurora"|"sunset"|"nebula"|"deepsea"|"dusk-forest"|"midnight-grid"|"none"}  switch the canvas background.
 - {op:"undo"} · {op:"redo"} · {op:"open", target:"settings"|"map"}
 
 # Sessions: models and joints
@@ -395,7 +409,7 @@ function spawnClaudeProcess(args, { cwd, env }) {
 function claudeCommand({ prompt, model, effort, appendPrompt, name, director, fullPermissions, mcpConfig }) {
   const parts = ['claude'];
   // Both flags take lists, so they go first: the next "--" flag ends each list.
-  if (mcpConfig) parts.push('--mcp-config', quote(mcpConfig), '--allowedTools', TEAM_TOOLS);
+  if (mcpConfig) parts.push('--mcp-config', quote(mcpConfig), '--allowedTools', AGENT_TOOLS);
   parts.push('--model', quote(model || MINIMUM_MODEL));
   parts.push('--effort', quote(effort || 'medium'));
   if (appendPrompt) parts.push('--append-system-prompt', quote(appendPrompt));
@@ -444,17 +458,15 @@ ipcMain.handle('pty:create', (_event, options = {}) => {
 
   let launch = null;
 
-  if (options.command === 'claude') {
+  if (options.command === 'claude' && !NO_CLAUDE) {
     launch = claudeCommand({
       model: normalizeModel(options.model),
       effort: normalizeEffort(options.effort),
-      appendPrompt:
-        options.appendPrompt ||
-        `You are one agent in a coordinated fleet. Read and follow the shared fleet context at ${contextFile()} before you begin.`,
+      appendPrompt: agentAppendPrompt(options.appendPrompt, Boolean(options.nodeId)),
       name: options.name || undefined,
       prompt: options.prompt ? String(options.prompt) : '',
       fullPermissions: options.fullPermissions !== false,
-      mcpConfig: options.team && options.nodeId ? writeAgentMcpConfig(options.nodeId) : null,
+      mcpConfig: options.nodeId ? writeAgentMcpConfig(options.nodeId, Boolean(options.team)) : null,
     });
   }
 
@@ -630,6 +642,26 @@ ipcMain.handle(
     })
 );
 
+/**
+ * Windows voice typing (Win+H): the system dictation panel types into the
+ * focused prompt box. The window must have focus for the keystroke to land.
+ */
+ipcMain.handle('voice:typing', async () => {
+  if (process.platform !== 'win32') return { ok: false, error: 'Voice typing needs Windows.' };
+  const script = path.join(ROOT, 'scripts', 'voicetyping.ps1');
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
+  const powershell = existsInPath('powershell') || 'powershell.exe';
+  return new Promise((resolve) => {
+    const proc = spawn(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+      windowsHide: true,
+    });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => (stderr += chunk));
+    proc.on('error', (error) => resolve({ ok: false, error: error.message }));
+    proc.on('exit', (code) => resolve(code === 0 ? { ok: true } : { ok: false, error: stderr.trim() || 'Win+H failed' }));
+  });
+});
+
 ipcMain.handle('voice:stop', () => {
   stopVoice();
   send('voice:state', 'stopped');
@@ -802,20 +834,33 @@ function writeDirectorMcpConfig() {
   fs.writeFileSync(directorMcpFile(), JSON.stringify(config, null, 2), 'utf8');
 }
 
+/** An agent's extra system prompt: its own (or the fleet default) plus the tools hint. */
+function agentAppendPrompt(appendPrompt, withTools) {
+  const base = String(
+    appendPrompt ||
+      `You are one agent in a coordinated fleet. Read and follow the shared fleet context at ${contextFile()} before you begin.`
+  );
+  return withTools ? `${base}
+
+${AGENT_TOOLS_HINT}` : base;
+}
+
 /**
- * MCP config for one team agent: the same server in "team" mode, holding a
- * token that identifies this window, so the app can check its rank.
+ * MCP config for one Claude agent: the same server in "agent" mode, holding a
+ * token that identifies this window, so the app knows who is asking and can
+ * check ownership and rank. Team members also get the team tools.
  */
-function writeAgentMcpConfig(nodeId) {
+function writeAgentMcpConfig(nodeId, team = false) {
   const file = path.join(agentsDir(), `${String(nodeId).replace(/[^\w-]/g, '') || 'agent'}-mcp.json`);
   const config = {
     mcpServers: {
-      team: {
+      xode: {
         command: process.execPath,
         args: [MCP_PATH],
         env: {
           ELECTRON_RUN_AS_NODE: '1',
-          XODE_MCP_MODE: 'team',
+          XODE_MCP_MODE: 'agent',
+          XODE_MCP_TEAM: team ? '1' : '0',
           XODE_CONTROL_URL: control.url || '',
           XODE_CONTROL_TOKEN: control.agentToken(nodeId),
         },
@@ -911,7 +956,9 @@ function startDirector(options = {}) {
   return { started: true };
 }
 
-ipcMain.handle('director:start', (_event, options = {}) => startDirector(options));
+ipcMain.handle('director:start', (_event, options = {}) =>
+  NO_CLAUDE ? { error: 'Claude is disabled for this test run' } : startDirector(options)
+);
 
 ipcMain.handle('director:send', (_event, { text } = {}) => {
   const message = String(text || '').trim();
@@ -947,6 +994,7 @@ function chatEvent(nodeId, event) {
 }
 
 ipcMain.handle('claude:send', (_event, options = {}) => {
+  if (NO_CLAUDE) return { error: 'Claude is disabled for this test run' };
   const nodeId = String(options.nodeId || '');
   if (!nodeId) return { error: 'missing nodeId' };
 
@@ -961,13 +1009,13 @@ ipcMain.handle('claude:send', (_event, options = {}) => {
   }
 
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
-  const teamMcp = options.team ? writeAgentMcpConfig(nodeId) : null;
-  if (teamMcp) args.push('--mcp-config', teamMcp, '--allowedTools', TEAM_TOOLS);
+  const agentMcp = writeAgentMcpConfig(nodeId, Boolean(options.team));
+  if (agentMcp) args.push('--mcp-config', agentMcp, '--allowedTools', AGENT_TOOLS);
   args.push('--model', normalizeModel(options.model));
   args.push('--effort', normalizeEffort(options.effort));
   args.push(
     '--append-system-prompt',
-    String(options.appendPrompt || `You are one agent in a coordinated fleet. Read and follow the shared fleet context at ${contextFile()} before you begin.`)
+    agentAppendPrompt(options.appendPrompt, Boolean(agentMcp))
   );
   // Print mode cannot answer a permission prompt, so tools would be denied.
   // Bypass unless the user has turned full permissions off.
@@ -1220,10 +1268,107 @@ ipcMain.handle('win:capture', async (_event, rect = {}) => {
   try {
     const image = await mainWindow.webContents.capturePage({ x, y, width: w, height: h });
     const size = image.getSize();
-    const scaled = size.width > 520 ? image.resize({ width: 520, quality: 'good' }) : image;
-    return `data:image/jpeg;base64,${scaled.toJPEG(82).toString('base64')}`;
+    const maxWidth = Math.max(120, Math.floor(rect.maxWidth || 520));
+    const scaled = size.width > maxWidth ? image.resize({ width: maxWidth, quality: 'good' }) : image;
+    return `data:image/jpeg;base64,${scaled.toJPEG(90).toString('base64')}`;
   } catch {
     return null;
+  }
+});
+
+/**
+ * Screenshot of one browser window's page for an agent, straight from its
+ * webContents, so it works even when the window is covered or off screen.
+ */
+ipcMain.handle('web:capture', async (_event, { id, maxWidth = 1280 } = {}) => {
+  const contents = webContents.fromId(Number(id));
+  if (!contents || contents.isDestroyed()) return { error: 'that browser is gone' };
+  try {
+    // A guest page that has not painted recently can leave capturePage
+    // hanging; ask for a frame and give up after a few seconds.
+    contents.invalidate();
+    const image = await Promise.race([
+      contents.capturePage(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
+    if (!image) return { error: 'capture timed out' };
+    if (image.isEmpty()) return { error: 'the page has not painted yet' };
+    const size = image.getSize();
+    const scaled = size.width > maxWidth ? image.resize({ width: maxWidth, quality: 'good' }) : image;
+    const out = scaled.getSize();
+    return { data: scaled.toJPEG(72).toString('base64'), mime: 'image/jpeg', width: out.width, height: out.height };
+  } catch (error) {
+    return { error: String((error && error.message) || error) };
+  }
+});
+
+/**
+ * First-run setup: is Claude Code installed, and is anyone signed in?
+ * Uses `claude auth status` (JSON); never sends anything anywhere.
+ */
+ipcMain.handle(
+  'claude:auth-status',
+  () =>
+    new Promise((resolve) => {
+      let proc;
+      try {
+        proc = spawnClaudeProcess(['auth', 'status'], { cwd: defaultWorkspace(), env: process.env });
+      } catch {
+        resolve({ installed: false, loggedIn: false });
+        return;
+      }
+      let out = '';
+      proc.stdout.setEncoding('utf8');
+      proc.stdout.on('data', (chunk) => (out += chunk));
+      const timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {
+          /* ignore */
+        }
+        resolve({ installed: true, loggedIn: false });
+      }, 15000);
+      proc.on('error', () => {
+        clearTimeout(timer);
+        resolve({ installed: false, loggedIn: false });
+      });
+      proc.on('exit', () => {
+        clearTimeout(timer);
+        try {
+          const status = JSON.parse(out.slice(out.indexOf('{')));
+          resolve({ installed: true, loggedIn: Boolean(status.loggedIn), method: status.authMethod || '' });
+        } catch {
+          resolve({ installed: true, loggedIn: false });
+        }
+      });
+    })
+);
+
+/**
+ * Open a console window that signs in to Claude or installs Claude Code, so
+ * the user sees (and answers) the real prompts. Only these fixed commands.
+ */
+const SETUP_COMMANDS = {
+  login: 'claude auth login',
+  install: 'npm install -g @anthropic-ai/claude-code',
+};
+ipcMain.handle('claude:setup-console', (_event, { action } = {}) => {
+  const command = SETUP_COMMANDS[action];
+  if (!command) return { ok: false, error: 'unknown setup action' };
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd.exe', ['/c', 'start', 'XodeCodeSetup', 'cmd', '/k', command], {
+        detached: true,
+        windowsHide: false,
+      }).unref();
+    } else if (process.platform === 'darwin') {
+      spawn('osascript', ['-e', `tell application "Terminal" to do script "${command}"`], { detached: true }).unref();
+    } else {
+      spawn('x-terminal-emulator', ['-e', `bash -lc '${command}; exec bash'`], { detached: true }).unref();
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
   }
 });
 
@@ -1343,7 +1488,8 @@ function createWindow() {
   });
 
   mainWindow.removeMenu();
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // Test runs open without stealing focus from whatever the user is doing.
+  mainWindow.once('ready-to-show', () => (NO_CLAUDE ? mainWindow.showInactive() : mainWindow.show()));
 
   // Dev convenience: F5 reloads the renderer from disk (ignoring cache) so
   // edited HTML/CSS/JS takes effect.
@@ -1396,9 +1542,14 @@ function createWindow() {
   mainWindow.loadURL(`${SCHEME}://${HOST}/src/renderer/index.html`);
 
   if (process.env.XODECODE_TEAMTEST) {
-    const { runTeamTest } = require('./teamtest');
+    const { runTeamTest, runAgentToolTest } = require('./teamtest');
+    const { runStressTest } = require('./stresstest');
+    const { runOnboardTest } = require('./onboardtest');
+    const kind = process.env.XODECODE_TEST_KIND;
+    const runTest =
+      kind === 'agent' ? runAgentToolTest : kind === 'stress' ? runStressTest : kind === 'onboard' ? runOnboardTest : runTeamTest;
     mainWindow.webContents.once('did-finish-load', () => {
-      runTeamTest(mainWindow, { url: control.url, token: control.token, agentToken: control.agentToken }).catch((error) => {
+      runTest(mainWindow, { url: control.url, token: control.token, agentToken: control.agentToken }).catch((error) => {
         console.log(`TEAMTEST_FAIL ${error && error.message}`);
         app.quit();
       });
