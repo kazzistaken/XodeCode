@@ -73,6 +73,11 @@ static class XodeSpeech
 
         recognizer.HypothesisGenerated += (sender, args) => Emit("PARTIAL", args.Hypothesis.Text);
 
+        // Windows ends a session after ~5 s of silence before the first word
+        // (TimeoutExceeded) unless told otherwise: wait patiently instead.
+        recognizer.Timeouts.InitialSilenceTimeout = TimeSpan.FromMinutes(30);
+        recognizer.Timeouts.BabbleTimeout = TimeSpan.FromSeconds(0);
+
         SpeechContinuousRecognitionSession session = recognizer.ContinuousRecognitionSession;
         // Keep listening through long pauses; the app stops us.
         session.AutoStopSilenceTimeout = TimeSpan.FromHours(4);
@@ -86,12 +91,34 @@ static class XodeSpeech
 
         ManualResetEvent done = new ManualResetEvent(false);
         string failure = null;
+        int restarts = 0;
         session.Completed += (sender, args) =>
         {
-            if (args.Status != SpeechRecognitionResultStatus.Success)
+            // A session that ends on a timeout (silence, or a long pause) just
+            // starts again, so dictation keeps listening until the app stops it.
+            bool timedOut = args.Status == SpeechRecognitionResultStatus.TimeoutExceeded ||
+                args.Status == SpeechRecognitionResultStatus.Success;
+            if (timedOut && restarts < 1000)
             {
-                failure = args.Status.ToString();
+                restarts += 1;
+                // Off the event thread: starting again from inside the
+                // engine's own callback can stall it.
+                new Thread(() =>
+                {
+                    try
+                    {
+                        Thread.Sleep(50);
+                        Wait(session.StartAsync());
+                    }
+                    catch (Exception error)
+                    {
+                        failure = error.Message;
+                        done.Set();
+                    }
+                }) { IsBackground = true }.Start();
+                return;
             }
+            failure = args.Status.ToString();
             done.Set();
         };
 

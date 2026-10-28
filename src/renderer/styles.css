@@ -5190,38 +5190,3 @@ html.ui-flat .log-sheet.dx-sheet {
 .dx-sheet .dx-bubble {
   font-size: var(--fs-lg);
 }
-
-/* Grouped layout: a quiet outline and label around each kind's windows. */
-.group-frames {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-}
-
-.group-frame {
-  position: absolute;
-  border-radius: var(--radius);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.02);
-  transition:
-    left 360ms cubic-bezier(0.22, 1, 0.36, 1),
-    top 360ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 360ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 360ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.group-label {
-  position: absolute;
-  left: 12px;
-  bottom: 100%;
-  margin-bottom: 8px;
-  color: var(--faint);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}

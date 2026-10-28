@@ -295,8 +295,8 @@ export function initSettings(ctx) {
             },
           }),
           settingRow({
-            title: 'Group windows by type',
-            desc: 'Windows of the same kind share one screen-sized group and each kind gets its own group; zoom out to see them all. Turn off to fit every window on one screen.',
+            title: 'Arrange windows side by side',
+            desc: 'New windows open right beside the last one, in rows, each at its own size; zoom out to see them all. Turn off to shrink every window so they all fit on one screen.',
             value: store.state.settings.fullSizeWindows !== false,
             onChange: (value) => {
               store.setSetting('fullSizeWindows', value);

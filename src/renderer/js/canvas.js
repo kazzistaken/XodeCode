@@ -13,14 +13,9 @@ import {
 } from './motion.js';
 
 export const GRID = 28;
-// Grouped layout: the space between groups of different kinds, and their labels.
-const GROUP_GAP = 140;
-const GROUP_LABEL = { agent: 'Claude', terminal: 'Terminals', browser: 'Browsers', board: 'Boards', music: 'Music' };
-/** Windows of the same kind are grouped together. */
-function groupKey(node) {
-  if (node.kind === 'terminal') return node.cli === 'claude' ? 'agent' : 'terminal';
-  return node.kind;
-}
+// Side-by-side layout: the space between neighbouring windows.
+const FLOW_GAP = 24;
+const FLOW_ROW_SCREENS = 1.6;
 export const MIN_W = 300;
 export const MIN_H = 170;
 export const MIN_ZOOM = 0.5; // zoomed out to 2x the normal view at most
@@ -542,7 +537,7 @@ export class Canvas {
     // Settle the layout first so the window grows straight into its slot.
     this.relayout({ animate: true, page, fresh: new Set([id]) });
     this.drawJointLines();
-    if (this.layoutMode(page) === 'grouped') this.centerOnGroup(id);
+    if (this.layoutMode(page) === 'flow') this.ensureVisible(id);
     if (view) {
       view.el.classList.remove('is-parked');
       view.el.style.zIndex = String(node.z);
@@ -557,35 +552,35 @@ export class Canvas {
     return true;
   }
 
-  /** The arrangement in use: "grid" means grouped by type while that setting is on. */
+  /** The arrangement in use: "grid" means side by side while that setting is on. */
   layoutMode(page = store.page) {
     const mode = page.layout || 'grid';
-    return mode === 'grid' && store.state.settings.fullSizeWindows !== false ? 'grouped' : mode;
+    return mode === 'grid' && store.state.settings.fullSizeWindows !== false ? 'flow' : mode;
   }
 
   /**
-   * Where the first group sits. Fixed once the page has windows, so panning
+   * Where the first window sits. Fixed once the page has windows, so panning
    * never shifts anything; it starts again where you are looking when a page
    * is emptied.
    */
-  _groupAnchor(page, nodes) {
+  _flowAnchor(page, nodes) {
     if (!this._anchors) this._anchors = new Map();
     if (!nodes.length || !this._anchors.has(page.id)) {
       const frame = this.layoutFrame();
-      this._anchors.set(page.id, { x: frame.x, y: frame.y });
+      this._anchors.set(page.id, { x: frame.x + LAYOUT.margin, y: frame.y + LAYOUT.insets.top + LAYOUT.margin });
     }
     return this._anchors.get(page.id);
   }
 
   /**
-   * Plan a page. Grouped mode: windows of the same kind share one group the
-   * size of the screen at 100% zoom (they tile inside it and never grow past
-   * it); every kind gets its own group, laid out side by side with a clear gap.
-   * Zoom out to see every group. Other modes tile everything in one frame.
+   * Plan a page. Side-by-side mode: every window keeps its own size and is
+   * placed right after the previous one, in the order they were opened; when a
+   * row reaches about 1.6 screens wide the next window starts a new row below.
+   * Other modes tile everything to fill one screen.
    */
   _plan(page, nodes) {
     const mode = this.layoutMode(page);
-    if (mode !== 'grouped') {
+    if (mode !== 'flow') {
       const rects = tileRects({
         count: nodes.length,
         view: this.layoutFrame(),
@@ -594,98 +589,33 @@ export class Canvas {
         mode,
         mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
       });
-      this._groups?.delete(page.id);
       return nodes.map((node, index) => ({ node, rect: rects[index] })).filter((item) => item.rect);
     }
-    const groups = [];
-    for (const node of nodes) {
-      const key = groupKey(node);
-      let group = groups.find((entry) => entry.key === key);
-      if (!group) groups.push((group = { key, nodes: [] }));
-      group.nodes.push(node);
-    }
-    const anchor = this._groupAnchor(page, nodes);
-    const screen = this.layoutFrame();
-    const cols = Math.ceil(Math.sqrt(groups.length));
+    const anchor = this._flowAnchor(page, nodes);
+    // Rows run a little wider than the screen, so two or three windows sit
+    // side by side and the whole arrangement stays landscape when zoomed out.
+    const rowLimit = this.layoutFrame().w * FLOW_ROW_SCREENS;
     const plan = [];
-    groups.forEach((group, index) => {
-      const frame = {
-        x: anchor.x + (index % cols) * (screen.w + GROUP_GAP),
-        y: anchor.y + Math.floor(index / cols) * (screen.h + GROUP_GAP),
-        w: screen.w,
-        h: screen.h,
-      };
-      const rects = tileRects({ count: group.nodes.length, view: frame, scale: 1, config: LAYOUT, mode: 'grid' });
-      group.nodes.forEach((node, i) => rects[i] && plan.push({ node, rect: rects[i] }));
-      group.frame = frame;
-    });
-    if (!this._groups) this._groups = new Map();
-    this._groups.set(page.id, groups);
+    let x = anchor.x;
+    let y = anchor.y;
+    let rowHeight = 0;
+    for (const node of nodes) {
+      const w = Math.round(Math.min(LAYOUT.maxW, Math.max(MIN_W, node.w || 560)));
+      const h = Math.round(Math.min(LAYOUT.maxH, Math.max(MIN_H, node.h || 360)));
+      if (x > anchor.x && x + w > anchor.x + rowLimit) {
+        x = anchor.x;
+        y += rowHeight + FLOW_GAP;
+        rowHeight = 0;
+      }
+      plan.push({ node, rect: { x, y, w, h } });
+      x += w + FLOW_GAP;
+      rowHeight = Math.max(rowHeight, h);
+    }
     return plan;
   }
 
   planLayout(page = store.page) {
     return this._plan(page, this.tileableNodes(page));
-  }
-
-  /** The group a window belongs to (grouped mode), from the last layout. */
-  groupOf(id, page = store.page) {
-    return this._groups?.get(page.id)?.find((group) => group.nodes.some((node) => node.id === id)) || null;
-  }
-
-  /** Glide the camera to a window's group, keeping the zoom. */
-  centerOnGroup(id) {
-    const group = this.groupOf(id);
-    if (!group || !group.frame) return this.centerNode(id);
-    const vp = store.page.viewport;
-    const f = group.frame;
-    this.animateViewport({
-      x: this._screen.w / 2 - (f.x + f.w / 2) * vp.scale,
-      y: this._screen.h / 2 - (f.y + f.h / 2) * vp.scale,
-    });
-  }
-
-  /** A labelled outline around each group of same-kind windows. */
-  _drawGroups(page) {
-    const pageEl = this.pageEls.get(page.id);
-    if (!pageEl) return;
-    let layer = pageEl.querySelector(':scope > .group-frames');
-    if (!layer) {
-      layer = el('div', { class: 'group-frames', 'aria-hidden': 'true' });
-      pageEl.prepend(layer);
-    }
-    const groups = this.layoutMode(page) === 'grouped' ? this._groups?.get(page.id) || [] : [];
-    layer.replaceChildren(
-      ...groups
-        .map((group) => ({ group, nodes: group.nodes.filter((node) => !node.parked) }))
-        .filter(({ nodes }) => nodes.length)
-        .map(({ group, nodes }) => {
-          let minX = Infinity;
-          let minY = Infinity;
-          let maxX = -Infinity;
-          let maxY = -Infinity;
-          for (const node of nodes) {
-            minX = Math.min(minX, node.x);
-            minY = Math.min(minY, node.y);
-            maxX = Math.max(maxX, node.x + node.w);
-            maxY = Math.max(maxY, node.y + node.h);
-          }
-          const pad = 14;
-          return el(
-            'div',
-            {
-              class: 'group-frame',
-              style: {
-                left: `${minX - pad}px`,
-                top: `${minY - pad}px`,
-                width: `${maxX - minX + pad * 2}px`,
-                height: `${maxY - minY + pad * 2}px`,
-              },
-            },
-            el('span', { class: 'group-label', text: `${GROUP_LABEL[group.key] || group.key} · ${nodes.length}` })
-          );
-        })
-    );
   }
 
   /**
@@ -699,7 +629,6 @@ export class Canvas {
     const page = options.page || store.page;
     const plan = this.planLayout(page);
     if (!plan.length) {
-      this._drawGroups(page);
       return [];
     }
     const fresh = options.fresh || null;
@@ -719,7 +648,6 @@ export class Canvas {
       }
     }
     store.save();
-    this._drawGroups(page);
     return plan.map((item) => item.rect);
   }
 
@@ -899,7 +827,7 @@ export class Canvas {
     // a clean, evenly sized grid.
     if (tileable && !silent) this.relayout({ animate: true });
     // Full-size windows land beside the others: glide over to the new one.
-    if (tileable && !silent && focus && this.layoutMode(page) === 'grouped') this.centerOnGroup(node.id);
+    if (tileable && !silent && focus && this.layoutMode(page) === 'flow') this.ensureVisible(node.id);
     this.updateHero();
     if (focus) {
       this.focusNode(node.id);
