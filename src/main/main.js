@@ -15,7 +15,7 @@ if (NO_CLAUDE) {
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const pty = require('node-pty');
 const { createControlServer } = require('./control');
@@ -241,6 +241,30 @@ Pages and app
 - {op:"workspace", path} · {op:"theme", id:"graphite"|"slate"|"ash"} · {op:"notify", text}
 - {op:"background", id:"aurora"|"sunset"|"nebula"|"deepsea"|"dusk-forest"|"midnight-grid"|"none"}  switch the canvas background.
 - {op:"undo"} · {op:"redo"} · {op:"open", target:"settings"|"map"}
+
+# Writing prompts for agents (agent, send, joint, joint_add, joint_brief)
+An agent sees only your prompt and the code. It never sees the user's message, this chat or the
+canvas. Write every prompt as a self-contained brief a strong engineer could act on alone:
+1. Goal: the outcome and why it matters, in one or two sentences. Keep the user's intent and
+   quote their exact words when wording matters ("make it feel less cluttered").
+2. Context: the files, folders, functions, URLs, errors (pasted exactly) and prior decisions
+   that matter. Name things; never "the bug" or "that file".
+3. Scope: what to change, what to leave alone, conventions to match (style, libraries, tests).
+   No new dependencies or broad refactors unless the task needs them.
+4. Done when: concrete checks, e.g. "npm test passes", "the page loads at localhost:5173 with no
+   console errors", "clicking Save persists after reload". For UI work: open it in a browser with
+   your xode tools and screenshot it.
+5. Report: what to say when finished (a short summary, files changed, anything left open). In a
+   team: "call report with done / blocked / question".
+Write plain, direct prose, usually 4-12 lines: no role-play openers ("You are an expert..."), no
+filler, no shouting. Decide cheap ambiguities yourself and state the assumption in the prompt;
+if an ambiguity would change the outcome, ask the user before prompting. One task per agent;
+split independent work across agents instead of one giant prompt. For a follow-up (send), say
+what to change relative to what the agent just did, plus the new done-when.
+Joint briefs: goal, the split (who owns which files), shared interfaces/contracts between the
+parts, and the team's done-when. Lead prompt: coordinate, review and integrate the workers'
+changes, keep the brief current, report up. Worker prompt: its slice, its files, the interfaces
+it must honour, its done-when.
 
 # Sessions: models and joints
 - Use a joint only when the user asks for one ("jointed", "a team", "N agents on X") or the work
@@ -539,6 +563,62 @@ ipcMain.handle('pty:kill', (_event, { id } = {}) => {
  * ------------------------------------------------------------------ */
 
 const VOICE_SCRIPT = path.join(ROOT, 'scripts', 'dictate.ps1');
+const SPEECH_SOURCE = path.join(ROOT, 'scripts', 'xode-speech.cs');
+
+/**
+ * Build the dictation helper (scripts/xode-speech.cs) with the C# compiler
+ * that ships with Windows, once per version of the source. It drives Windows'
+ * own speech engine with no Windows UI. Resolves to the .exe, or null when it
+ * cannot be built (then the PowerShell engine is used).
+ */
+function speechHelper() {
+  return new Promise((resolve) => {
+    try {
+      const source = fs.readFileSync(SPEECH_SOURCE);
+      const hash = require('node:crypto').createHash('sha1').update(source).digest('hex').slice(0, 10);
+      const out = path.join(userDataDir(), 'bin', `xode-speech-${hash}.exe`);
+      if (fs.existsSync(out)) {
+        resolve(out);
+        return;
+      }
+      const windir = process.env.WINDIR || 'C:\Windows';
+      const fw = path.join(windir, 'Microsoft.NET', 'Framework64', 'v4.0.30319');
+      const meta = path.join(windir, 'System32', 'WinMetadata');
+      const csc = path.join(fw, 'csc.exe');
+      if (!fs.existsSync(csc)) {
+        resolve(null);
+        return;
+      }
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      execFile(
+        csc,
+        [
+          '-nologo',
+          '-optimize',
+          '-nowarn:1701',
+          `-out:${out}`,
+          `-r:${path.join(meta, 'Windows.Foundation.winmd')}`,
+          `-r:${path.join(meta, 'Windows.Media.winmd')}`,
+          `-r:${path.join(meta, 'Windows.Globalization.winmd')}`,
+          `-r:${path.join(fw, 'System.Runtime.dll')}`,
+          `-r:${path.join(fw, 'System.Runtime.InteropServices.WindowsRuntime.dll')}`,
+          SPEECH_SOURCE,
+        ],
+        { windowsHide: true, timeout: 60000 },
+        (error, stdout) => {
+          if (error || !fs.existsSync(out)) {
+            console.warn('[voice] could not build the dictation helper', String(stdout || error).slice(0, 400));
+            resolve(null);
+          } else {
+            resolve(out);
+          }
+        }
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
 /** @type {import('node:child_process').ChildProcess | null} */
 let voiceProc = null;
 let voiceStopping = false;
@@ -555,10 +635,18 @@ function stopVoice() {
   }
 }
 
-ipcMain.handle(
-  'voice:start',
-  () =>
-    new Promise((resolve) => {
+ipcMain.handle('voice:start', async () => {
+  const helper = process.platform === 'win32' ? await speechHelper() : null;
+  return startVoice(helper);
+});
+
+/**
+ * Start dictation: the helper when it is available, otherwise the PowerShell
+ * engine. Both print READY, then text lines; the helper also prints live
+ * PARTIAL lines while you speak.
+ */
+function startVoice(helper) {
+  return new Promise((resolve) => {
       if (voiceProc) {
         resolve({ ok: true });
         return;
@@ -567,7 +655,7 @@ ipcMain.handle(
         resolve({ ok: false, error: 'Dictation currently uses the Windows speech engine.' });
         return;
       }
-      if (!fs.existsSync(VOICE_SCRIPT)) {
+      if (!helper && !fs.existsSync(VOICE_SCRIPT)) {
         resolve({ ok: false, error: 'The dictation script is missing.' });
         return;
       }
@@ -575,11 +663,11 @@ ipcMain.handle(
       const powershell = existsInPath('powershell') || 'powershell.exe';
       let proc;
       try {
-        proc = spawn(
-          powershell,
-          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', VOICE_SCRIPT],
-          { windowsHide: true }
-        );
+        proc = helper
+          ? spawn(helper, [], { windowsHide: true })
+          : spawn(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', VOICE_SCRIPT], {
+              windowsHide: true,
+            });
       } catch (error) {
         resolve({ ok: false, error: error.message });
         return;
@@ -604,9 +692,17 @@ ipcMain.handle(
           const line = stdout.slice(0, index).replace(/\r$/, '').trim();
           stdout = stdout.slice(index + 1);
           if (!line) continue;
-          if (line === 'READY') {
+          const [kind, ...rest] = line.split('	');
+          const text = rest.join('	');
+          if (kind === 'READY') {
             send('voice:state', 'listening');
             settle({ ok: true });
+          } else if (kind === 'PARTIAL') {
+            send('voice:partial', text);
+          } else if (kind === 'FINAL') {
+            send('voice:text', text);
+          } else if (kind === 'ERROR') {
+            stderr += text;
           } else {
             send('voice:text', line);
           }
@@ -639,8 +735,8 @@ ipcMain.handle(
         stopVoice();
         settle({ ok: false, error: 'The speech engine did not respond.' });
       }, 8000);
-    })
-);
+  });
+}
 
 /**
  * Windows voice typing (Win+H): the system dictation panel types into the

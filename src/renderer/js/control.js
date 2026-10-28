@@ -172,7 +172,8 @@ const THEME_ALIASES = {
 
 /* ------------------------- JointedAgents -------------------------- */
 
-const JOINT_COLORS = ['#f2764b', '#6ea8f7', '#4fc99b', '#e6a53c', '#a98bf5', '#56b6c2'];
+// The palette's hues (styles.css): clay, blue, green, amber, violet, teal.
+const JOINT_COLORS = ['#d97757', '#7aa6e8', '#5fb57a', '#e0a64a', '#a88be8', '#5bb8b0'];
 const MAX_JOINT_MEMBERS = 5;
 
 const jointMembers = teamMembers;
@@ -514,7 +515,7 @@ async function handle(ctx, method, params) {
       const shape = allowed.has(requested) ? requested : 'rect';
       const color = /^#[0-9a-f]{3,8}$/i.test(String(params.color || ''))
         ? String(params.color)
-        : '#bdbdbd';
+        : '#a6a6ad'; // --ink-200
       const payload = { shape: shape === 'pen' ? 'line' : shape, color };
       if (payload.shape === 'arrow' || payload.shape === 'line') payload.a = [0, 0];
       const node = ctx.canvas.createNode({

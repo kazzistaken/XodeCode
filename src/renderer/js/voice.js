@@ -5,9 +5,11 @@ import { store } from './store.js';
  * Dictation into the prompt box you were using: an agent's chat box, the
  * Director sheet's composer, or the "Ask the Director" bar (the default).
  *
- * By default the mic opens Windows voice typing (Win+H), which types straight
- * into the focused box and is far more accurate. Settings can switch to the
- * built-in engine (scripts/dictate.ps1), whose phrases are appended here.
+ * By default it uses Windows' own speech engine through a small helper
+ * (scripts/xode-speech.cs) with no Windows UI: the words appear live in the
+ * box as you speak, and the finished phrase (with punctuation) replaces them
+ * when you pause. Settings can switch to Windows voice typing (Win+H), which
+ * shows the Windows panel instead.
  */
 
 // Prompt boxes dictation may type into.
@@ -62,14 +64,33 @@ export function initVoice(ctx) {
     else unmark();
   }
 
-  function append(text) {
+  // The box's text before the phrase being spoken, while one is in progress.
+  let phraseBase = null;
+
+  function joined(base, text) {
     let clean = String(text || '').replace(/\s+/g, ' ').trim();
-    if (!clean) return;
-    const input = target();
-    const current = input.value.trimEnd();
+    if (!clean) return base;
     // Start of the prompt or a new sentence: capitalise the first letter.
-    if (!current || /[.!?]$/.test(current)) clean = clean[0].toUpperCase() + clean.slice(1);
-    input.value = current ? `${current} ${clean}` : clean;
+    if (!base || /[.!?]$/.test(base)) clean = clean[0].toUpperCase() + clean.slice(1);
+    return base ? `${base} ${clean}` : clean;
+  }
+
+  /** Live words while speaking: shown in the box, replaced by the final phrase. */
+  function partial(text) {
+    const input = target();
+    if (phraseBase === null) phraseBase = input.value.trimEnd();
+    show(input, joined(phraseBase, text));
+  }
+
+  function append(text) {
+    const input = target();
+    const base = phraseBase !== null ? phraseBase : input.value.trimEnd();
+    phraseBase = null;
+    show(input, joined(base, text));
+  }
+
+  function show(input, value) {
+    input.value = value;
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.focus();
     try {
@@ -98,7 +119,16 @@ export function initVoice(ctx) {
     }
   }
 
-  const useWindows = () => store.state.settings.dictation !== 'builtin';
+  const useWindows = () => store.state.settings.dictation === 'windows';
+
+  // Typing yourself keeps whatever is in the box; the next phrase starts after it.
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.isTrusted && event.target === target()) phraseBase = null;
+    },
+    true
+  );
 
   async function start() {
     if (useWindows()) return voiceTyping();
@@ -123,6 +153,7 @@ export function initVoice(ctx) {
     } catch {
       /* ignore */
     }
+    phraseBase = null;
     setListening(false);
   }
 
@@ -134,6 +165,7 @@ export function initVoice(ctx) {
   });
 
   window.api.voice.onText((text) => append(text));
+  window.api.voice.onPartial?.((text) => partial(text));
   window.api.voice.onState((state) => {
     if (state === 'stopped') {
       setListening(false);

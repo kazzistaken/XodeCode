@@ -16,20 +16,20 @@ const THEMES = [
   {
     id: 'nightglass',
     name: 'Graphite',
-    desc: 'Black and grey',
-    swatch: 'linear-gradient(135deg,#1c1c1c 0%,#000000 55%,#cfcfcf 100%)',
+    desc: 'Clay accent',
+    swatch: 'linear-gradient(135deg,#202024 0%,#111113 55%,#d97757 100%)',
   },
   {
     id: 'cupola',
     name: 'Slate',
-    desc: 'Cool grey',
-    swatch: 'linear-gradient(135deg,#1c1c1c 0%,#000000 55%,#9fb6c4 100%)',
+    desc: 'Blue accent',
+    swatch: 'linear-gradient(135deg,#202024 0%,#111113 55%,#7aa6e8 100%)',
   },
   {
     id: 'ember',
     name: 'Ash',
-    desc: 'Warm grey',
-    swatch: 'linear-gradient(135deg,#1c1c1c 0%,#000000 55%,#c4a89f 100%)',
+    desc: 'Amber accent',
+    swatch: 'linear-gradient(135deg,#202024 0%,#111113 55%,#e0a64a 100%)',
   },
 ];
 
@@ -295,8 +295,8 @@ export function initSettings(ctx) {
             },
           }),
           settingRow({
-            title: 'Full-size windows',
-            desc: 'Every app window is as big as the screen and they sit side by side; zoom out to see them all. Turn off to shrink windows so they all fit on one screen.',
+            title: 'Group windows by type',
+            desc: 'Windows of the same kind share one screen-sized group and each kind gets its own group; zoom out to see them all. Turn off to fit every window on one screen.',
             value: store.state.settings.fullSizeWindows !== false,
             onChange: (value) => {
               store.setSetting('fullSizeWindows', value);
@@ -310,10 +310,13 @@ export function initSettings(ctx) {
             onChange: (value) => store.setSetting('snapToGrid', value),
           }),
           settingRow({
-            title: 'Windows voice typing for dictation',
-            desc: 'The mic (Ctrl+Shift+M) opens Windows voice typing (Win+H), which types into the prompt box you are using. Turn off to use the built-in engine instead (less accurate).',
-            value: store.state.settings.dictation !== 'builtin',
-            onChange: (value) => store.setSetting('dictation', value ? 'windows' : 'builtin'),
+            title: 'Use the Windows voice typing panel',
+            desc: 'Off (default): dictation runs inside XodeCode, with your words appearing live in the prompt box and no Windows pop-up. On: the mic opens Windows voice typing (Win+H) and its panel instead.',
+            value: store.state.settings.dictation === 'windows',
+            onChange: (value) => {
+              store.state.settings.dictationChosen = true;
+              store.setSetting('dictation', value ? 'windows' : 'app');
+            },
           }),
           groupLabel('Notifications'),
           settingRow({

@@ -31,8 +31,8 @@ function defaults() {
       snapToGrid: false,
       sounds: true,
       voice: true,
-      // 'windows' = Windows voice typing (Win+H); 'builtin' = XodeCode's own engine.
-      dictation: 'windows',
+      // 'app' = in-app dictation (no Windows UI); 'windows' = Windows voice typing (Win+H).
+      dictation: 'app',
       directorModel: 'claude-sonnet-5-5',
       directorEffort: 'low',
       background: '',
@@ -103,6 +103,8 @@ function migrate(raw) {
       delete settings.speakFinished;
       delete settings.speakDirector;
       delete settings.ttsVoice;
+      // In-app dictation replaced Win+H as the default; keep a choice made in Settings.
+      if (!settings.dictationChosen) settings.dictation = 'app';
       // Claude always renders in GUI mode now; the old switches are gone.
       delete settings.guiTerminals;
       delete settings.transparentUi;

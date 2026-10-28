@@ -148,6 +148,9 @@ async function runStressTest(mainWindow) {
   await run(`(() => {
     const s = window.__xo.store;
     s.setWorkspace(${JSON.stringify(outDir)});
+    s.setSetting('onboarded', true); // skip the first-run setup in test profiles
+    if (${JSON.stringify(Boolean(process.env.XODECODE_STRESS_FLAT))}) s.setSetting('flatUi', true);
+    document.querySelector('.onboard')?.remove();
     return true;
   })()`);
 

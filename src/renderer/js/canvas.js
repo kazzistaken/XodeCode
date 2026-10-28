@@ -13,6 +13,14 @@ import {
 } from './motion.js';
 
 export const GRID = 28;
+// Grouped layout: the space between groups of different kinds, and their labels.
+const GROUP_GAP = 140;
+const GROUP_LABEL = { agent: 'Claude', terminal: 'Terminals', browser: 'Browsers', board: 'Boards', music: 'Music' };
+/** Windows of the same kind are grouped together. */
+function groupKey(node) {
+  if (node.kind === 'terminal') return node.cli === 'claude' ? 'agent' : 'terminal';
+  return node.kind;
+}
 export const MIN_W = 300;
 export const MIN_H = 170;
 export const MIN_ZOOM = 0.5; // zoomed out to 2x the normal view at most
@@ -20,7 +28,8 @@ export const MAX_ZOOM = 2.4;
 const SHAPE_MIN = 16;
 
 const SHAPE_TOOLS = new Set(['rect', 'ellipse', 'diamond', 'arrow', 'line', 'pen']);
-const SHAPE_COLORS = ['#f2764b', '#6ea8f7', '#4fc99b', '#e6a53c', '#a98bf5'];
+// The palette's hues (styles.css): clay, blue, green, amber, violet.
+const SHAPE_COLORS = ['#d97757', '#7aa6e8', '#5fb57a', '#e0a64a', '#a88be8'];
 
 const factories = new Map();
 
@@ -533,7 +542,7 @@ export class Canvas {
     // Settle the layout first so the window grows straight into its slot.
     this.relayout({ animate: true, page, fresh: new Set([id]) });
     this.drawJointLines();
-    if (this.layoutMode(page) === 'full') this.centerNode(id);
+    if (this.layoutMode(page) === 'grouped') this.centerOnGroup(id);
     if (view) {
       view.el.classList.remove('is-parked');
       view.el.style.zIndex = String(node.z);
@@ -548,37 +557,135 @@ export class Canvas {
     return true;
   }
 
-  /** The rectangles the given windows should occupy right now. */
-  /** The arrangement in use: "grid" means full-size windows while that setting is on. */
+  /** The arrangement in use: "grid" means grouped by type while that setting is on. */
   layoutMode(page = store.page) {
     const mode = page.layout || 'grid';
-    return mode === 'grid' && store.state.settings.fullSizeWindows !== false ? 'full' : mode;
+    return mode === 'grid' && store.state.settings.fullSizeWindows !== false ? 'grouped' : mode;
   }
 
   /**
-   * The frame windows are tiled in, fixed at 100% zoom so windows are the same
-   * size at any zoom. Full-size windows anchor to the first window instead of
-   * the view, so panning around never shifts the grid.
+   * Where the first group sits. Fixed once the page has windows, so panning
+   * never shifts anything; it starts again where you are looking when a page
+   * is emptied.
    */
-  _frameFor(page, nodes) {
-    const frame = this.layoutFrame();
-    const first = nodes[0];
-    if (this.layoutMode(page) !== 'full' || !first) return frame;
-    const inset = LAYOUT.margin;
-    return { x: first.x - LAYOUT.insets.left - inset, y: first.y - LAYOUT.insets.top - inset, w: frame.w, h: frame.h };
+  _groupAnchor(page, nodes) {
+    if (!this._anchors) this._anchors = new Map();
+    if (!nodes.length || !this._anchors.has(page.id)) {
+      const frame = this.layoutFrame();
+      this._anchors.set(page.id, { x: frame.x, y: frame.y });
+    }
+    return this._anchors.get(page.id);
+  }
+
+  /**
+   * Plan a page. Grouped mode: windows of the same kind share one group the
+   * size of the screen at 100% zoom (they tile inside it and never grow past
+   * it); every kind gets its own group, laid out side by side with a clear gap.
+   * Zoom out to see every group. Other modes tile everything in one frame.
+   */
+  _plan(page, nodes) {
+    const mode = this.layoutMode(page);
+    if (mode !== 'grouped') {
+      const rects = tileRects({
+        count: nodes.length,
+        view: this.layoutFrame(),
+        scale: 1,
+        config: LAYOUT,
+        mode,
+        mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
+      });
+      this._groups?.delete(page.id);
+      return nodes.map((node, index) => ({ node, rect: rects[index] })).filter((item) => item.rect);
+    }
+    const groups = [];
+    for (const node of nodes) {
+      const key = groupKey(node);
+      let group = groups.find((entry) => entry.key === key);
+      if (!group) groups.push((group = { key, nodes: [] }));
+      group.nodes.push(node);
+    }
+    const anchor = this._groupAnchor(page, nodes);
+    const screen = this.layoutFrame();
+    const cols = Math.ceil(Math.sqrt(groups.length));
+    const plan = [];
+    groups.forEach((group, index) => {
+      const frame = {
+        x: anchor.x + (index % cols) * (screen.w + GROUP_GAP),
+        y: anchor.y + Math.floor(index / cols) * (screen.h + GROUP_GAP),
+        w: screen.w,
+        h: screen.h,
+      };
+      const rects = tileRects({ count: group.nodes.length, view: frame, scale: 1, config: LAYOUT, mode: 'grid' });
+      group.nodes.forEach((node, i) => rects[i] && plan.push({ node, rect: rects[i] }));
+      group.frame = frame;
+    });
+    if (!this._groups) this._groups = new Map();
+    this._groups.set(page.id, groups);
+    return plan;
   }
 
   planLayout(page = store.page) {
-    const nodes = this.tileableNodes(page);
-    const rects = tileRects({
-      count: nodes.length,
-      view: this._frameFor(page, nodes),
-      scale: 1,
-      config: LAYOUT,
-      mode: this.layoutMode(page),
-      mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
+    return this._plan(page, this.tileableNodes(page));
+  }
+
+  /** The group a window belongs to (grouped mode), from the last layout. */
+  groupOf(id, page = store.page) {
+    return this._groups?.get(page.id)?.find((group) => group.nodes.some((node) => node.id === id)) || null;
+  }
+
+  /** Glide the camera to a window's group, keeping the zoom. */
+  centerOnGroup(id) {
+    const group = this.groupOf(id);
+    if (!group || !group.frame) return this.centerNode(id);
+    const vp = store.page.viewport;
+    const f = group.frame;
+    this.animateViewport({
+      x: this._screen.w / 2 - (f.x + f.w / 2) * vp.scale,
+      y: this._screen.h / 2 - (f.y + f.h / 2) * vp.scale,
     });
-    return nodes.map((node, index) => ({ node, rect: rects[index] })).filter((item) => item.rect);
+  }
+
+  /** A labelled outline around each group of same-kind windows. */
+  _drawGroups(page) {
+    const pageEl = this.pageEls.get(page.id);
+    if (!pageEl) return;
+    let layer = pageEl.querySelector(':scope > .group-frames');
+    if (!layer) {
+      layer = el('div', { class: 'group-frames', 'aria-hidden': 'true' });
+      pageEl.prepend(layer);
+    }
+    const groups = this.layoutMode(page) === 'grouped' ? this._groups?.get(page.id) || [] : [];
+    layer.replaceChildren(
+      ...groups
+        .map((group) => ({ group, nodes: group.nodes.filter((node) => !node.parked) }))
+        .filter(({ nodes }) => nodes.length)
+        .map(({ group, nodes }) => {
+          let minX = Infinity;
+          let minY = Infinity;
+          let maxX = -Infinity;
+          let maxY = -Infinity;
+          for (const node of nodes) {
+            minX = Math.min(minX, node.x);
+            minY = Math.min(minY, node.y);
+            maxX = Math.max(maxX, node.x + node.w);
+            maxY = Math.max(maxY, node.y + node.h);
+          }
+          const pad = 14;
+          return el(
+            'div',
+            {
+              class: 'group-frame',
+              style: {
+                left: `${minX - pad}px`,
+                top: `${minY - pad}px`,
+                width: `${maxX - minX + pad * 2}px`,
+                height: `${maxY - minY + pad * 2}px`,
+              },
+            },
+            el('span', { class: 'group-label', text: `${GROUP_LABEL[group.key] || group.key} · ${nodes.length}` })
+          );
+        })
+    );
   }
 
   /**
@@ -592,6 +699,7 @@ export class Canvas {
     const page = options.page || store.page;
     const plan = this.planLayout(page);
     if (!plan.length) {
+      this._drawGroups(page);
       return [];
     }
     const fresh = options.fresh || null;
@@ -611,6 +719,7 @@ export class Canvas {
       }
     }
     store.save();
+    this._drawGroups(page);
     return plan.map((item) => item.rect);
   }
 
@@ -756,7 +865,7 @@ export class Canvas {
     if (tileable) {
       // Reserve the tiled slot before mounting, so the window fades in where
       // it belongs instead of jumping there afterwards.
-      const slot = this._nextTileFor(page);
+      const slot = this._nextTileFor(page, node);
       if (slot) {
         node.x = slot.x;
         node.y = slot.y;
@@ -790,7 +899,7 @@ export class Canvas {
     // a clean, evenly sized grid.
     if (tileable && !silent) this.relayout({ animate: true });
     // Full-size windows land beside the others: glide over to the new one.
-    if (tileable && !silent && focus && this.layoutMode(page) === 'full') this.centerNode(node.id);
+    if (tileable && !silent && focus && this.layoutMode(page) === 'grouped') this.centerOnGroup(node.id);
     this.updateHero();
     if (focus) {
       this.focusNode(node.id);
@@ -802,17 +911,9 @@ export class Canvas {
   }
 
   /** Where a not-yet-added window would land in the current tiling. */
-  _nextTileFor(page) {
-    const nodes = this.tileableNodes(page);
-    const rects = tileRects({
-      count: nodes.length + 1,
-      view: this._frameFor(page, nodes),
-      scale: 1,
-      config: LAYOUT,
-      mode: this.layoutMode(page),
-      mainIndex: Math.max(0, nodes.findIndex((node) => node.id === page.mainId)),
-    });
-    return rects[rects.length - 1] || null;
+  _nextTileFor(page, candidate) {
+    const plan = this._plan(page, [...this.tileableNodes(page), candidate]);
+    return plan.find((item) => item.node === candidate)?.rect || null;
   }
 
   /** Re-create a removed node from a snapshot (used by undo/redo). */

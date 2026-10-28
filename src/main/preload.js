@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('api', {
     stop: () => ipcRenderer.invoke('voice:stop'),
     typing: () => ipcRenderer.invoke('voice:typing'),
     onText: (callback) => subscribe('voice:text', callback),
+    onPartial: (callback) => subscribe('voice:partial', callback),
     onState: (callback) => subscribe('voice:state', callback),
   },
   director: {

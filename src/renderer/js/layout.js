@@ -73,12 +73,9 @@ function tileCells({ count, view, scale = 1, config = LAYOUT, mode = 'grid', mai
   if (!n || !view) return [];
   // Whatever the arrangement, windows keep their comfortable size while they
   // all fit; columns/rows/focus only divide the canvas once it is full.
-  if (mode !== 'full') {
-    const roomy = gridRects({ n, view, scale, config, onlyIdeal: true });
-    if (roomy) return roomy;
-  }
+  const roomy = gridRects({ n, view, scale, config, onlyIdeal: true });
+  if (roomy) return roomy;
   const area = usableArea(view, scale, config);
-  if (mode === 'full') return fullRects(area, n);
   if (n > 1 && mode === 'columns') {
     const rects = strip(area, n, 'x');
     if (rects[0].w >= area.minW * 0.75) return rects;
@@ -109,28 +106,6 @@ function usableArea(view, scale, config) {
     minW,
     minH,
   };
-}
-
-/**
- * Full-size windows: every window is as big as the screen at 100% zoom, laid
- * out in a near-square grid. Nothing shrinks as windows are added; zoom out
- * to see them all.
- */
-function fullRects(area, n) {
-  const cols = Math.ceil(Math.sqrt(n));
-  const g = area.g * 3;
-  const rects = [];
-  for (let i = 0; i < n; i += 1) {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    rects.push({
-      x: Math.round(area.x + col * (area.w + g)),
-      y: Math.round(area.y + row * (area.h + g)),
-      w: Math.round(area.w),
-      h: Math.round(area.h),
-    });
-  }
-  return rects;
 }
 
 /** n equal windows in one row (axis "x") or one column (axis "y"). */
